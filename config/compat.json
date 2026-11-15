@@ -1,0 +1,12 @@
+{
+  "isolatedName": "UltimateBattleEngine",
+  "supported": [
+    {
+      "label": "Undertale v1.08 (Steam, Windows, GameMaker: Studio 1.4 runner, bytecode 16)",
+      "files": {
+        "data.win": "B718F8223A5BB31979FFEED10BE6140C857B882FC0D0462B89D6287AE38C81C7",
+        "UNDERTALE.exe": "C8C4191026BF5587A6FAD120855B8B82FFB4FA0C3EAF10515BE472AD84248E58"
+      }
+    }
+  ]
+}

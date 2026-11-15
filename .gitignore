@@ -1,0 +1,13 @@
+# Never commit Undertale assets, binaries, or third-party tools.
+/game/
+/build/
+/tools/
+/logs/
+/profiles/*.local.json
+*.win
+*.ogg
+*.exe
+*.dll
+*.pdb
+*.zip
+/config/settings.json

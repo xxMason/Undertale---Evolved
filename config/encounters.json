@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "notes": "Data-driven encounter catalogue. patches/ube_patch.csx generates the in-game catalogue from this file at build time. All IDs were read from the installed Undertale v1.08 data.win, never assumed.",
+  "adapters": {
+    "generic_battlegroup": "Reset state with SCR_GAMESTART, apply the player configuration, set global.battlegroup and global.currentroom, then room_goto(room_battle). The original obj_battlecontroller does everything else."
+  },
+  "encounters": [
+    {
+      "id": "froggit",
+      "displayName": "Froggit",
+      "classification": "enemy",
+      "area": "Ruins",
+      "routeRequirements": "none",
+      "requiredGlobals": { "battlegroup": 4 },
+      "requiredFlags": {},
+      "startRoom": "room_battle",
+      "adapter": "generic_battlegroup",
+      "specialMechanics": "none",
+      "victoryConditions": "Monster HP reaches 0; obj_battlecontroller sets won = 1 and returns to global.currentroom.",
+      "defeatConditions": "Player HP reaches 0; scr_gameoverb goes to room_gameover, then obj_gameover returns to global.currentroom.",
+      "mercyConditions": "Compliment or Threaten, then Spare. Fleeing also ends the battle (always succeeds with the Bandage equipped, as in the original).",
+      "cleanup": "Menu controller stops all audio, clears global.inbattle and re-runs SCR_GAMESTART before the next battle.",
+      "status": "verified",
+      "enabled": true
+    },
+    {
+      "id": "toriel",
+      "displayName": "Toriel",
+      "classification": "boss",
+      "area": "Ruins",
+      "routeRequirements": "none (genocide dialogue variant depends on kill count)",
+      "requiredGlobals": { "battlegroup": 22 },
+      "requiredFlags": {},
+      "startRoom": "room_battle",
+      "adapter": "generic_battlegroup",
+      "specialMechanics": "Scripted spare sequence, attacks avoid the player at low HP, post-battle cutscene expects the overworld room. Needs its own adapter.",
+      "victoryConditions": "not yet analysed",
+      "defeatConditions": "not yet analysed",
+      "mercyConditions": "not yet analysed",
+      "cleanup": "not yet analysed",
+      "status": "planned",
+      "enabled": false
+    }
+  ]
+}

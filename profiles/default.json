@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "name": "default",
+  "love": 1,
+  "startingHp": 0,
+  "weapon": 3,
+  "armor": 4,
+  "items": [0, 0, 0, 0, 0, 0, 0, 0],
+  "authentic": true,
+  "notes": "startingHp 0 means full HP for the chosen LOVE. weapon/armor/items use original item IDs (3 = Stick, 4 = Bandage) and are recorded for forward compatibility; milestone 1 applies love and startingHp only."
+}

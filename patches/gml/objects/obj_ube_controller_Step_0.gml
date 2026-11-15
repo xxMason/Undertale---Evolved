@@ -84,14 +84,44 @@ if (page == 0)
 }
 if (page == 1)
 {
-    row_y0 = 120;
-    row_h = 36;
-    row_n = global.ube_enc_count + 1;
+    row_y0 = 176;
+    row_h = 32;
+    // Fights in the current area tab and Monsters/Bosses tab, then BACK.
+    fn = 0;
     for (i = 0; i < global.ube_enc_count; i += 1)
     {
-        row_on[i] = global.ube_enc_enabled[i];
+        if (global.ube_enc_areaidx[i] == global.ube_tab_area && global.ube_enc_cat[i] == global.ube_tab_cat)
+        {
+            flist[fn] = i;
+            row_on[fn] = global.ube_enc_enabled[i];
+            fn += 1;
+        }
     }
-    row_on[global.ube_enc_count] = 1;
+    row_on[fn] = 1;
+    row_n = fn + 1;
+    // Tab positions (shared with Draw and the mouse).
+    scr_setfont(fnt_maintext);
+    var tx = 48;
+    for (i = 0; i < global.ube_area_count; i += 1)
+    {
+        tabx[i] = tx;
+        tabw[i] = string_width("[" + global.ube_area_name[i] + "]");
+        tx += tabw[i] + 24;
+    }
+    ctxt[0] = "[MONSTERS]";
+    ctxt[1] = "[BOSSES]";
+    tx = 48;
+    for (i = 0; i < 2; i += 1)
+    {
+        ctabx[i] = -1;
+        ctabw[i] = 0;
+        if (global.ube_area_has[(global.ube_tab_area * 2) + i] == 1)
+        {
+            ctabx[i] = tx;
+            ctabw[i] = string_width(ctxt[i]);
+            tx += ctabw[i] + 24;
+        }
+    }
 }
 if (page == 2)
 {
@@ -143,6 +173,124 @@ if (mrow >= 0)
             sel = mrow;
             k_ok = 1;
         }
+    }
+}
+
+// ---- Fight Select tabs
+if (page == 1)
+{
+    var new_area = global.ube_tab_area;
+    var new_cat = global.ube_tab_cat;
+    var other_cat = 1 - global.ube_tab_cat;
+    var has_other = (global.ube_area_has[(global.ube_tab_area * 2) + other_cat] == 1);
+    if (mrow >= 0)
+    {
+        if (row_on[mrow] == 1 && (m_moved || k_ok))
+        {
+            focus = 2;
+        }
+    }
+    if (mouse_check_button_pressed(mb_left) && ptimer >= 4)
+    {
+        if (mouse_y >= 84 && mouse_y < 106)
+        {
+            for (i = 0; i < global.ube_area_count; i += 1)
+            {
+                if (mouse_x >= tabx[i] && mouse_x < tabx[i] + tabw[i])
+                {
+                    new_area = i;
+                    focus = 0;
+                }
+            }
+        }
+        if (mouse_y >= 120 && mouse_y < 142)
+        {
+            for (i = 0; i < 2; i += 1)
+            {
+                if (ctabx[i] >= 0 && mouse_x >= ctabx[i] && mouse_x < ctabx[i] + ctabw[i])
+                {
+                    new_cat = i;
+                    focus = 1;
+                }
+            }
+        }
+    }
+    if (focus == 0)
+    {
+        if (k_right)
+        {
+            new_area = (global.ube_tab_area + 1) mod global.ube_area_count;
+        }
+        if (k_left)
+        {
+            new_area = ((global.ube_tab_area - 1) + global.ube_area_count) mod global.ube_area_count;
+        }
+        if (k_down)
+        {
+            focus = 1;
+            snd_play(snd_squeak);
+        }
+        k_up = 0;
+        k_down = 0;
+    }
+    else if (focus == 1)
+    {
+        if ((k_left || k_right) && has_other)
+        {
+            new_cat = other_cat;
+        }
+        if (k_up)
+        {
+            focus = 0;
+            snd_play(snd_squeak);
+        }
+        if (k_down)
+        {
+            focus = 2;
+            sel = 0;
+            snd_play(snd_squeak);
+        }
+        k_up = 0;
+        k_down = 0;
+    }
+    else
+    {
+        // Leaving the top of the list moves up to the tabs.
+        var first = 0;
+        while (row_on[first] == 0)
+        {
+            first += 1;
+        }
+        if (k_up && sel == first)
+        {
+            focus = 1;
+            k_up = 0;
+            snd_play(snd_squeak);
+        }
+    }
+    if (new_area != global.ube_tab_area)
+    {
+        global.ube_tab_area = new_area;
+        new_cat = 0;
+        if (global.ube_area_has[new_area * 2] == 0)
+        {
+            new_cat = 1;
+        }
+        global.ube_tab_cat = new_cat;
+        sel = 0;
+        snd_play(snd_squeak);
+        exit;
+    }
+    if (new_cat != global.ube_tab_cat)
+    {
+        global.ube_tab_cat = new_cat;
+        sel = 0;
+        snd_play(snd_squeak);
+        exit;
+    }
+    while (row_on[sel] == 0)
+    {
+        sel += 1;
     }
 }
 
@@ -230,6 +378,7 @@ if (page == 0)
         if (sel == 0)
         {
             page = 1;
+            focus = 2;
             sel = 0;
             ptimer = 0;
         }
@@ -251,7 +400,7 @@ if (page == 0)
 
 if (page == 1)
 {
-    if (k_back || (k_ok && sel == global.ube_enc_count))
+    if (k_back || (k_ok && focus == 2 && sel == fn))
     {
         snd_play(snd_select);
         page = 0;
@@ -259,10 +408,18 @@ if (page == 1)
         ptimer = 0;
         exit;
     }
+    if (k_ok && focus < 2)
+    {
+        // Confirming on a tab row moves down towards the list.
+        snd_play(snd_select);
+        focus += 1;
+        sel = 0;
+        exit;
+    }
     if (k_ok && row_on[sel] == 1)
     {
         snd_play(snd_select);
-        ube_start_encounter(sel);
+        ube_start_encounter(flist[sel]);
     }
     exit;
 }
@@ -337,6 +494,7 @@ if (page == 3)
         if (sel == 1)
         {
             page = 1;
+            focus = 2;
         }
         else
         {

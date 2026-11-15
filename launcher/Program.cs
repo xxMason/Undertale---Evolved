@@ -434,7 +434,7 @@ namespace Ube
             if (scenario == "menu") expect = new[] { "BOOT ", "EXIT" };
             else if (scenario == "win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else if (scenario == "lose") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "EXIT" };
-            else if (scenario == "ui") expect = new[] { "BOOT ", "CONFIG lv=5 hp=33", "STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36", "STATE ", "EXIT" };
+            else if (scenario == "ui") expect = new[] { "BOOT ", "CONFIG lv=5 hp=33", "TABS area=0 cat=0 focus=2 rows=1", "TABS area=0 cat=1 focus=1 rows=1", "TABS area=1 cat=0 focus=0 rows=0", "STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36", "STATE ", "EXIT" };
             else if (scenario == "lose_then_win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "RETRY", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else throw new UbeException(ExitUsage, "Unknown selftest scenario " + scenario);
             int pos = 0;

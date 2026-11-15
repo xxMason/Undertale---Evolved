@@ -10,6 +10,11 @@ draw_rectangle(16, 16, 623, 463, false);
 draw_set_color(c_black);
 draw_rectangle(21, 21, 618, 458, false);
 scr_setfont(fnt_maintext);
+// ptimer is 0 only on the frame a page was switched, before Step has laid that page out.
+if (ptimer == 0)
+{
+    exit;
+}
 
 var title = "ULTIMATE BATTLE ENGINE";
 if (page == 1)
@@ -61,12 +66,12 @@ for (i = 0; i < row_n; i += 1)
     }
     if (page == 1)
     {
-        if (i < global.ube_enc_count)
+        if (i < fn)
         {
-            label = global.ube_enc_name[i] + "  - " + global.ube_enc_area[i];
-            if (global.ube_enc_enabled[i] == 0)
+            label = global.ube_enc_name[flist[i]];
+            if (global.ube_enc_enabled[flist[i]] == 0)
             {
-                label += " (not yet available)";
+                label += "  (not yet available)";
             }
         }
         else
@@ -109,7 +114,7 @@ for (i = 0; i < row_n; i += 1)
     {
         draw_set_color(c_gray);
     }
-    else if (sel == i)
+    else if (sel == i && (page != 1 || focus == 2))
     {
         draw_set_color(c_yellow);
         draw_sprite(spr_heart, 0, row_x - 32, row_y0 + (i * row_h) + 1);
@@ -117,6 +122,44 @@ for (i = 0; i < row_n; i += 1)
     draw_text(row_x, row_y0 + (i * row_h), label);
 }
 
+if (page == 1)
+{
+    // Area tabs, then the Monsters/Bosses tabs this area has.
+    for (i = 0; i < global.ube_area_count; i += 1)
+    {
+        draw_set_color(c_white);
+        if (i == global.ube_tab_area)
+        {
+            draw_set_color(c_yellow);
+            if (focus == 0)
+            {
+                draw_sprite(spr_heart, 0, tabx[i] - 19, 89);
+            }
+        }
+        draw_text(tabx[i], 88, "[" + global.ube_area_name[i] + "]");
+    }
+    for (i = 0; i < 2; i += 1)
+    {
+        if (ctabx[i] >= 0)
+        {
+            draw_set_color(c_white);
+            if (i == global.ube_tab_cat)
+            {
+                draw_set_color(c_yellow);
+                if (focus == 1)
+                {
+                    draw_sprite(spr_heart, 0, ctabx[i] - 19, 125);
+                }
+            }
+            draw_text(ctabx[i], 124, ctxt[i]);
+        }
+    }
+    if (fn == 0)
+    {
+        draw_set_color(c_gray);
+        draw_text(120, 150, "No fights available here yet.");
+    }
+}
 draw_set_color(c_white);
 if (page == 0)
 {
@@ -162,6 +205,10 @@ draw_set_color(c_gray);
 if (page == 2)
 {
     draw_text(40, 420, "[LEFT/RIGHT] Change  [Z] Select  [X] Back");
+}
+else if (page == 1)
+{
+    draw_text(40, 420, "[UP/DOWN] Tabs and fights  [LEFT/RIGHT] Switch tab  [Z] Select  [X] Back");
 }
 else
 {

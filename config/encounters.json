@@ -4,12 +4,21 @@
   "adapters": {
     "generic_battlegroup": "Reset state with SCR_GAMESTART, apply the player configuration, set global.battlegroup and global.currentroom, then room_goto(room_battle). The original obj_battlecontroller does everything else."
   },
+  "areas": [
+    { "id": "ruins", "label": "RUINS", "tabs": ["monsters", "bosses"] },
+    { "id": "snowdin", "label": "SNOWDIN", "tabs": ["monsters", "bosses"] },
+    { "id": "hotland", "label": "HOTLANDS", "tabs": ["monsters", "bosses"] },
+    { "id": "core", "label": "CORE", "tabs": ["monsters", "bosses"] },
+    { "id": "judgement_hall", "label": "JUDGEMENT HALL", "tabs": ["bosses"] },
+    { "id": "barrier", "label": "BARRIER", "tabs": ["bosses"] }
+  ],
+  "areaNotes": "Fight Select shows one tab per area and, under it, only the Monsters/Bosses tabs listed here. An encounter with classification 'enemy' goes under Monsters; 'boss' or 'miniboss' under Bosses. The build fails if an encounter points at an area or tab that is not declared.",
   "encounters": [
     {
       "id": "froggit",
       "displayName": "Froggit",
       "classification": "enemy",
-      "area": "Ruins",
+      "area": "ruins",
       "routeRequirements": "none",
       "requiredGlobals": { "battlegroup": 4 },
       "requiredFlags": {},
@@ -27,7 +36,7 @@
       "id": "toriel",
       "displayName": "Toriel",
       "classification": "boss",
-      "area": "Ruins",
+      "area": "ruins",
       "routeRequirements": "none (genocide dialogue variant depends on kill count)",
       "requiredGlobals": { "battlegroup": 22 },
       "requiredFlags": {},

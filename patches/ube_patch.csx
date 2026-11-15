@@ -94,14 +94,44 @@ var cat = new StringBuilder();
 cat.AppendLine("global.ube_build = " + GmlString(BuildId) + ";");
 using (var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "config", "encounters.json"))))
 {
+    // Areas and their Monsters (0) / Bosses (1) tabs.
+    var areaIds = new System.Collections.Generic.List<string>();
+    var areaTabs = new System.Collections.Generic.List<bool[]>();
+    foreach (var a in doc.RootElement.GetProperty("areas").EnumerateArray())
+    {
+        var has = new bool[2];
+        foreach (var t in a.GetProperty("tabs").EnumerateArray())
+        {
+            string tab = t.GetString();
+            if (tab == "monsters") has[0] = true;
+            else if (tab == "bosses") has[1] = true;
+            else throw new Exception("Unknown tab " + tab);
+        }
+        if (!has[0] && !has[1]) throw new Exception("Area without tabs: " + a.GetProperty("id").GetString());
+        int ai = areaIds.Count;
+        areaIds.Add(a.GetProperty("id").GetString());
+        areaTabs.Add(has);
+        cat.AppendLine($"global.ube_area_name[{ai}] = {GmlString(a.GetProperty("label").GetString())};");
+        cat.AppendLine($"global.ube_area_has[{ai * 2}] = {(has[0] ? 1 : 0)};");
+        cat.AppendLine($"global.ube_area_has[{ai * 2 + 1}] = {(has[1] ? 1 : 0)};");
+    }
+    cat.AppendLine($"global.ube_area_count = {areaIds.Count};");
+
     int n = 0;
     foreach (var e in doc.RootElement.GetProperty("encounters").EnumerateArray())
     {
         string adapter = e.GetProperty("adapter").GetString();
         int adapterId = adapter == "generic_battlegroup" ? 0 : throw new Exception("Unknown adapter " + adapter);
-        cat.AppendLine($"global.ube_enc_id[{n}] = {GmlString(e.GetProperty("id").GetString())};");
+        string encId = e.GetProperty("id").GetString();
+        int areaIdx = areaIds.IndexOf(e.GetProperty("area").GetString());
+        if (areaIdx < 0) throw new Exception("Encounter " + encId + " uses an undeclared area");
+        string cls = e.GetProperty("classification").GetString();
+        int catIdx = cls == "enemy" ? 0 : (cls == "boss" || cls == "miniboss") ? 1 : throw new Exception("Unknown classification " + cls);
+        if (!areaTabs[areaIdx][catIdx]) throw new Exception("Encounter " + encId + " needs a tab its area does not declare");
+        cat.AppendLine($"global.ube_enc_id[{n}] = {GmlString(encId)};");
         cat.AppendLine($"global.ube_enc_name[{n}] = {GmlString(e.GetProperty("displayName").GetString())};");
-        cat.AppendLine($"global.ube_enc_area[{n}] = {GmlString(e.GetProperty("area").GetString())};");
+        cat.AppendLine($"global.ube_enc_areaidx[{n}] = {areaIdx};");
+        cat.AppendLine($"global.ube_enc_cat[{n}] = {catIdx};");
         cat.AppendLine($"global.ube_enc_group[{n}] = {e.GetProperty("requiredGlobals").GetProperty("battlegroup").GetInt32()};");
         cat.AppendLine($"global.ube_enc_adapter[{n}] = {adapterId};");
         cat.AppendLine($"global.ube_enc_enabled[{n}] = {(e.GetProperty("enabled").GetBoolean() ? 1 : 0)};");

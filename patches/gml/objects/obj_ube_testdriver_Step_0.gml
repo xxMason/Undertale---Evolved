@@ -57,8 +57,18 @@ if (global.ube_test == "ui" && room == room_ube_menu)
         seq[10] = 88;
         seq[11] = 38;
         seq[12] = 90;
-        seq[13] = 90;
-        n = 14;
+        // Fight Select tabs: up to Monsters/Bosses, Bosses and back, up to the areas,
+        // SNOWDIN and back to RUINS, down twice to the list, start Froggit.
+        seq[13] = 38;
+        seq[14] = 39;
+        seq[15] = 37;
+        seq[16] = 38;
+        seq[17] = 39;
+        seq[18] = 37;
+        seq[19] = 40;
+        seq[20] = 40;
+        seq[21] = 90;
+        n = 22;
     }
     else
     {
@@ -100,6 +110,11 @@ if (global.ube_test == "ui" && room == room_ube_menu)
             if (seq_i == 2 && battles == 0)
             {
                 screen_save("ube_shot_setup.png");
+            }
+            if (battles == 0 && (seq_i == 13 || seq_i == 15 || seq_i == 18))
+            {
+                screen_save("ube_shot_fights" + string(seq_i) + ".png");
+                ube_log("TABS area=" + string(global.ube_tab_area) + " cat=" + string(global.ube_tab_cat) + " focus=" + string(obj_ube_controller.focus) + " rows=" + string(obj_ube_controller.fn));
             }
             keyboard_key_press(seq[seq_i]);
         }

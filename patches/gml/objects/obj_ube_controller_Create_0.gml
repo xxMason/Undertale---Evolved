@@ -11,6 +11,8 @@ if (!variable_global_exists("ube_boot"))
     global.ube_xp0 = 0;
     global.ube_test = "";
     global.ube_test_runs = 0;
+    global.ube_tab_area = 0;
+    global.ube_tab_cat = 0;
     ube_catalogue();
     ini_open("ube_config.ini");
     global.ube_lv = clamp(floor(ini_read_real("Player", "LOVE", 1)), 1, 20);
@@ -33,6 +35,9 @@ row_x = 0;
 row_y0 = 0;
 row_h = 0;
 row_n = 0;
+// Fight Select: focus 0 = area tabs, 1 = Monsters/Bosses tabs, 2 = fight list.
+focus = 2;
+fn = 0;
 res_win = 0;
 res_kills = 0;
 res_xp = 0;

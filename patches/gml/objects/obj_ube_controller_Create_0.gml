@@ -18,7 +18,9 @@ if (!variable_global_exists("ube_boot"))
     global.ube_lv = clamp(floor(ini_read_real("Player", "LOVE", 1)), 1, 20);
     global.ube_hp = floor(ini_read_real("Player", "HP", 0));
     global.ube_test = ini_read_string("Test", "Scenario", "");
+    global.ube_wasd = clamp(floor(ini_read_real("Settings", "Movement", 0)), 0, 1);
     ini_close();
+    instance_create(0, 0, obj_ube_input);
     ube_log("BOOT build=" + global.ube_build + " lv=" + string(global.ube_lv) + " hp=" + string(global.ube_hp) + " test=" + global.ube_test + " steam=" + string(steam_initialised()));
     if (global.ube_test != "")
     {
@@ -57,7 +59,7 @@ menu_on[1] = 1;
 menu_on[2] = 0;
 menu_on[3] = 0;
 menu_on[4] = 0;
-menu_on[5] = 0;
+menu_on[5] = 1;
 menu_on[6] = 1;
 if (global.ube_state == 3 || global.ube_state == 7)
 {

@@ -56,6 +56,7 @@ UndertaleCode NewScript(string name)
 var controller = NewObject("obj_ube_controller", false);
 controller.Depth = -1000;
 var testdriver = NewObject("obj_ube_testdriver", true);
+var inputHelper = NewObject("obj_ube_input", true);
 
 var menuRoom = new UndertaleRoom()
 {
@@ -157,6 +158,9 @@ importGroup.QueueReplace(controller.EventHandlerFor(EventType.Step, (uint)0, Dat
 importGroup.QueueReplace(controller.EventHandlerFor(EventType.Draw, (uint)0, Data), Gml("objects/obj_ube_controller_Draw_0.gml"));
 importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_testdriver_Create_0.gml"));
 importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Step, (uint)0, Data), Gml("objects/obj_ube_testdriver_Step_0.gml"));
+
+importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_input_Create_0.gml"));
+importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Step, (uint)1, Data), Gml("objects/obj_ube_input_Step_1.gml"));
 
 // The ONLY change to original game code: after the original game-over sequence returns to
 // global.currentroom, the game would reload the last save (scr_tempload -> file9), which

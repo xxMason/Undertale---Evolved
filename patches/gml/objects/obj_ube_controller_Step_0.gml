@@ -141,6 +141,14 @@ if (page == 3)
     row_on[1] = 1;
     row_on[2] = 1;
 }
+if (page == 5)
+{
+    row_y0 = 120;
+    row_h = 40;
+    row_n = 2;
+    row_on[0] = 1;
+    row_on[1] = 1;
+}
 if (sel >= row_n)
 {
     sel = 0;
@@ -315,7 +323,11 @@ if (k_up)
 }
 
 // ---- Automated self-test hooks (only when the launcher wrote [Test] Scenario)
-if (global.ube_test != "" && global.ube_test != "ui")
+if (global.ube_test == "keys")
+{
+    exit;
+}
+if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd")
 {
     k_ok = 0;
     k_back = 0;
@@ -389,11 +401,40 @@ if (page == 0)
             sel = 0;
             ptimer = 0;
         }
+        else if (sel == 5)
+        {
+            page = 5;
+            sel = 0;
+            ptimer = 0;
+        }
         else if (sel == 6)
         {
             ube_log("EXIT");
             game_end();
         }
+    }
+    exit;
+}
+
+if (page == 5)
+{
+    if (sel == 0 && (k_left || k_right || k_ok))
+    {
+        // MOVEMENT: 0 = arrow keys, 1 = WASD (applied by obj_ube_input).
+        global.ube_wasd = 1 - global.ube_wasd;
+        snd_play(snd_select);
+        ini_open("ube_config.ini");
+        ini_write_real("Settings", "Movement", global.ube_wasd);
+        ini_close();
+        ube_log("SETTINGS movement=" + string(global.ube_wasd));
+        exit;
+    }
+    if (k_back || (k_ok && sel == 1))
+    {
+        snd_play(snd_select);
+        page = 0;
+        sel = 5;
+        ptimer = 0;
     }
     exit;
 }

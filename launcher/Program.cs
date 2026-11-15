@@ -53,7 +53,7 @@ namespace Ube
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|ui|win|lose|lose_then_win] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|win|lose|lose_then_win] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
@@ -90,6 +90,9 @@ namespace Ube
             string ini = Path.Combine(saveDir, "ube_config.ini");
             if (profileArg != null) ApplyProfile(profileArg, ini);
             IniSet(ini, "Test", "Scenario", selftest ?? "");
+            // Self-tests always start in arrow-key mode; the user's choice is restored afterwards.
+            int savedMovement = (int)IniGetNumber(ini, "Settings", "Movement", 0);
+            if (selftest != null) IniSet(ini, "Settings", "Movement", "0");
             if (exportArg != null) ExportProfile(ini, exportArg);
             if (prepareOnly) { Log("Prepared. Not launching (--prepare-only)."); return ExitOk; }
 
@@ -110,7 +113,11 @@ namespace Ube
                 else p.WaitForExit();
                 Log("Game exited with code " + p.ExitCode + (timedOut ? " (killed after timeout)" : ""));
             }
-            if (selftest != null) IniSet(ini, "Test", "Scenario", "");
+            if (selftest != null)
+            {
+                IniSet(ini, "Test", "Scenario", "");
+                IniSet(ini, "Settings", "Movement", savedMovement.ToString());
+            }
 
             var after = SnapshotOriginals(install, originalSaveDir);
             var diffs = Diff(before, after);
@@ -230,6 +237,15 @@ namespace Ube
             {
                 Log("Working copy is up to date.");
                 return;
+            }
+
+            // Never rebuild underneath a running game: deleting its files would break it.
+            foreach (var running in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(RunnerName)))
+            {
+                string exePath = null;
+                try { exePath = running.MainModule.FileName; } catch { }
+                if (exePath == null || exePath.StartsWith(gameDir, StringComparison.OrdinalIgnoreCase))
+                    throw new UbeException(ExitBuild, "Ultimate Battle Engine is already running (process " + running.Id + "). Close it before rebuilding the working copy.");
             }
 
             Log("Building working copy in " + gameDir + " ...");
@@ -432,6 +448,8 @@ namespace Ube
         {
             string[] expect;
             if (scenario == "menu") expect = new[] { "BOOT ", "EXIT" };
+            else if (scenario == "keys") expect = new[] { "BOOT ", "KEYS check=1 direct=1 timeup=1", "EXIT" };
+            else if (scenario == "wasd") expect = new[] { "BOOT ", "WASDCHK off sel=0", "SETTINGS movement=1", "WASDCHK on sel=0", "STATE IN_BATTLE", "WASDCHK battle timeup=1", "STATE ", "EXIT" };
             else if (scenario == "win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else if (scenario == "lose") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "EXIT" };
             else if (scenario == "ui") expect = new[] { "BOOT ", "CONFIG lv=5 hp=33", "TABS area=0 cat=0 focus=2 rows=1", "TABS area=0 cat=1 focus=1 rows=1", "TABS area=1 cat=0 focus=0 rows=0", "STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36", "STATE ", "EXIT" };

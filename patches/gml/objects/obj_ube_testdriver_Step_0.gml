@@ -37,11 +37,41 @@ else
 }
 // Scenario "ui": walk the real menus with key presses.
 // 37 left, 38 up, 39 right, 40 down, 90 Z, 88 X.
-if (global.ube_test == "ui" && room == room_ube_menu)
+if (global.ube_test == "wasd" && room == room_battle)
+{
+    // Hold W for a moment and report what the original input code sees.
+    if (t == 40)
+    {
+        keyboard_key_press(87);
+    }
+    if (t == 46)
+    {
+        ube_log("WASDCHK battle timeup=" + string(obj_time.up));
+        keyboard_key_release(87);
+    }
+}
+if ((global.ube_test == "ui" || global.ube_test == "wasd") && room == room_ube_menu)
 {
     var seq;
     var n;
-    if (battles == 0)
+    if (battles == 0 && global.ube_test == "wasd")
+    {
+        // W in arrow mode (must do nothing), up twice to SETTINGS, toggle to WASD, back,
+        // then S twice (SETTINGS -> EXIT -> FIGHT SELECT) and start Froggit.
+        // 87 W, 83 S.
+        seq[0] = 87;
+        seq[1] = 38;
+        seq[2] = 38;
+        seq[3] = 90;
+        seq[4] = 39;
+        seq[5] = 88;
+        seq[6] = 83;
+        seq[7] = 83;
+        seq[8] = 90;
+        seq[9] = 90;
+        n = 10;
+    }
+    else if (battles == 0)
     {
         // PLAYER SETUP: LOVE 1 -> 5, starting HP 36 -> 33, back, FIGHT SELECT, Froggit.
         seq[0] = 40;
@@ -107,11 +137,26 @@ if (global.ube_test == "ui" && room == room_ube_menu)
         var ph = (mt - 30) mod 10;
         if (ph == 0)
         {
-            if (seq_i == 2 && battles == 0)
+            if (global.ube_test == "wasd" && battles == 0)
+            {
+                if (seq_i == 1)
+                {
+                    ube_log("WASDCHK off sel=" + string(obj_ube_controller.sel));
+                }
+                if (seq_i == 4)
+                {
+                    screen_save("ube_shot_settings.png");
+                }
+                if (seq_i == 8)
+                {
+                    ube_log("WASDCHK on sel=" + string(obj_ube_controller.sel));
+                }
+            }
+            if (seq_i == 2 && battles == 0 && global.ube_test == "ui")
             {
                 screen_save("ube_shot_setup.png");
             }
-            if (battles == 0 && (seq_i == 13 || seq_i == 15 || seq_i == 18))
+            if (battles == 0 && global.ube_test == "ui" && (seq_i == 13 || seq_i == 15 || seq_i == 18))
             {
                 screen_save("ube_shot_fights" + string(seq_i) + ".png");
                 ube_log("TABS area=" + string(global.ube_tab_area) + " cat=" + string(global.ube_tab_cat) + " focus=" + string(obj_ube_controller.focus) + " rows=" + string(obj_ube_controller.fn));
@@ -122,6 +167,44 @@ if (global.ube_test == "ui" && room == room_ube_menu)
         {
             keyboard_key_release(seq[seq_i]);
             seq_i += 1;
+        }
+    }
+}
+// Scenario "keys": does a simulated arrow key reach keyboard_check_direct / obj_time?
+if (global.ube_test == "keys" && room == room_ube_menu)
+{
+    if (ready == 0)
+    {
+        probe += 1;
+        if ((probe mod 10) == 1)
+        {
+            keyboard_key_press(81);
+        }
+        if ((probe mod 10) == 4)
+        {
+            if (keyboard_check(81))
+            {
+                ready = 1;
+            }
+            keyboard_key_release(81);
+        }
+    }
+    else
+    {
+        mt += 1;
+        if (mt == 5)
+        {
+            keyboard_key_press(vk_up);
+        }
+        if (mt == 9)
+        {
+            ube_log("KEYS check=" + string(keyboard_check(vk_up)) + " direct=" + string(keyboard_check_direct(vk_up)) + " timeup=" + string(obj_time.up));
+            keyboard_key_release(vk_up);
+        }
+        if (mt == 14)
+        {
+            ube_log("EXIT test=keys");
+            game_end();
         }
     }
 }

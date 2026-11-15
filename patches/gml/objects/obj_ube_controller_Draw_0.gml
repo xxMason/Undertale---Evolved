@@ -25,6 +25,10 @@ if (page == 2)
 {
     title = "PLAYER SETUP";
 }
+if (page == 5)
+{
+    title = "SETTINGS";
+}
 if (page == 3)
 {
     title = "DEFEAT";
@@ -107,6 +111,21 @@ for (i = 0; i < row_n; i += 1)
         if (i == 2)
         {
             label = "MAIN MENU";
+        }
+    }
+    if (page == 5)
+    {
+        if (i == 0)
+        {
+            label = "MOVEMENT   < ARROW KEYS >";
+            if (global.ube_wasd == 1)
+            {
+                label = "MOVEMENT   < WASD >";
+            }
+        }
+        if (i == 1)
+        {
+            label = "BACK";
         }
     }
     draw_set_color(c_white);
@@ -202,7 +221,13 @@ if (page == 3)
     }
 }
 draw_set_color(c_gray);
-if (page == 2)
+if (page == 5)
+{
+    draw_text(120, 220, "Applies to menus and to moving your SOUL in battle.");
+    draw_text(120, 252, "Z, X and C keep their usual jobs.");
+    draw_text(40, 420, "[LEFT/RIGHT] Change  [Z] Select  [X] Back");
+}
+else if (page == 2)
 {
     draw_text(40, 420, "[LEFT/RIGHT] Change  [Z] Select  [X] Back");
 }

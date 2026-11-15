@@ -19,6 +19,9 @@ same independently (hash, size and modified time) around the whole run.
 | Game boots into the custom menu, Steam not initialised | `BOOT ... steam=0`, screenshot |
 | Menu navigation with keys: Player Setup, LOVE 1 to 5, HP 36 to 33, Fight Select, Froggit | `CONFIG lv=5 hp=33`, `STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36` |
 | Fight Select tabs with keys: Monsters to Bosses and back, RUINS to SNOWDIN and back, down to the list | `TABS area=0 cat=1 focus=1 rows=1`, `TABS area=1 cat=0 focus=0 rows=0`, three screenshots |
+| Settings: W does nothing in arrow mode; after switching MOVEMENT to WASD, S moves the menu cursor | `WASDCHK off sel=0`, `SETTINGS movement=1`, `WASDCHK on sel=0` |
+| WASD reaches the battle's movement input | `WASDCHK battle timeup=1` (`obj_time.up`, which `obj_heart` reads) |
+| Simulated arrow keys reach `keyboard_check_direct` | `KEYS check=1 direct=1 timeup=1` |
 | LOVE and starting HP reach the original battle | battle screenshot shows `LV 1`, `HP 01 / 20`; LV 20 run shows 99/99 |
 | Winning returns to the results screen | `STATE VICTORY kills=1 xp=3 gold=2 hp=29/36` (EXP and gold from original code) |
 | Losing plays the original game over and returns | `STATE DEFEAT hp=0` |
@@ -43,6 +46,8 @@ same independently (hash, size and modified time) around the whole run.
   whether real key presses are affected in that window is unknown.
 - **Spare and flee endings.** They use the same return path as victory in the original
   code, but no test exercised them.
+- **WASD with a real keyboard.** The tests press W/A/S/D through simulated keys. The
+  helper may add up to one frame of input delay in WASD mode; this was not measured.
 - **Mouse support** in the menus, including clicking tabs.
 - **Areas with a single tab** (JUDGEMENT HALL, BARRIER) were not opened in a test; the
   Bosses-only layout is implemented but unseen.

@@ -28,7 +28,7 @@ $before = Get-Snapshot $watched
 $results = @()
 $profile = Join-Path $root 'profiles\default.json'
 
-foreach ($scenario in 'menu', 'ui', 'win', 'lose', 'lose_then_win') {
+foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'win', 'lose', 'lose_then_win') {
     $out = & $exe --profile $profile --selftest $scenario 2>&1
     $code = $LASTEXITCODE
     $game = ($out | Where-Object { $_ -match '^\s+game> ' } | ForEach-Object { ($_ -replace '^\s+game> ', '') }) -join ' | '

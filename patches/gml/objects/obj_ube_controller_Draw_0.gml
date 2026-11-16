@@ -52,6 +52,10 @@ else
     {
         title = "TRAINING MODE";
     }
+    if (page == 8)
+    {
+        title = "CUSTOM BATTLES";
+    }
     if (page == 3)
     {
         title = "DEFEAT";
@@ -216,6 +220,17 @@ for (i = 0; i < row_n; i += 1)
             }
         }
         if (i == 1)
+        {
+            label = "BACK";
+        }
+    }
+    if (page == 8)
+    {
+        if (i < global.ube_cbl_count)
+        {
+            label = global.ube_cbl_name[i];
+        }
+        else
         {
             label = "BACK";
         }
@@ -413,6 +428,15 @@ if (page == 2)
     draw_text_transformed(row_x, by2 - 44, "AT " + string(at - 10) + " (" + string(ws) + ")     DF " + string(df - 10) + " (" + string(ad) + ")", 2, 2, 0);
     hint = "[LEFT/RIGHT] Change    [Z] Select    [X] Back";
 }
+if (page == 8)
+{
+    draw_set_color(c_gray);
+    draw_text(row_x, 96, "Bosses built from files in the simulator's custom folder.");
+    if (global.ube_cbl_count == 0)
+    {
+        draw_text(row_x, by2 + 10, "No custom bosses found.");
+    }
+}
 if (page == 7)
 {
     draw_set_color(c_gray);
@@ -442,7 +466,7 @@ if (page == 5)
 if (page == 3)
 {
     draw_set_color(c_white);
-    draw_text_transformed(96, 116, "* " + global.ube_enc_name[global.ube_last], 2, 2, 0);
+    draw_text_transformed(96, 116, "* " + global.ube_last_name, 2, 2, 0);
     if (res_win == 1)
     {
         if (res_story == 1)

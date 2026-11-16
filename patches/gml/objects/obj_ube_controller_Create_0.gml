@@ -68,6 +68,8 @@ if (!variable_global_exists("ube_boot"))
         global.ube_item[ci] = clamp(floor(ini_read_real("Player", "Item" + string(ci), 0)), 0, global.ube_item_max);
     }
     global.ube_mus_on = 0;
+    global.ube_custom = 0;
+    global.ube_last_name = "";
     // Training Mode (all of it is ignored while Enabled is 0 = Authentic Mode).
     global.ube_training = clamp(floor(ini_read_real("Training", "Enabled", 0)), 0, 1);
     global.ube_t_infhp = clamp(floor(ini_read_real("Training", "InfiniteHP", 1)), 0, 1);
@@ -92,6 +94,25 @@ if (!variable_global_exists("ube_boot"))
     global.ube_t_dmg = 0;
     global.ube_t_lethal = 0;
     ini_close();
+    // Custom bosses: the launcher writes custom/index.ini listing the boss files.
+    global.ube_cbl_count = 0;
+    if (file_exists("custom/index.ini"))
+    {
+        ini_open("custom/index.ini");
+        var cn = clamp(floor(ini_read_real("Index", "Count", 0)), 0, 30);
+        var cj;
+        for (cj = 0; cj < cn; cj += 1)
+        {
+            var cf = ini_read_string("Index", "File" + string(cj), "");
+            if (cf != "")
+            {
+                global.ube_cbl_file[global.ube_cbl_count] = cf;
+                global.ube_cbl_name[global.ube_cbl_count] = ini_read_string("Index", "Name" + string(cj), cf);
+                global.ube_cbl_count += 1;
+            }
+        }
+        ini_close();
+    }
     instance_create(0, 0, obj_ube_input);
     ube_log("BOOT build=" + global.ube_build + " lv=" + string(global.ube_lv) + " hp=" + string(global.ube_hp) + " test=" + global.ube_test + " steam=" + string(steam_initialised()));
     if (global.ube_test != "")
@@ -138,7 +159,7 @@ menu_txt[6] = "EXIT";
 menu_on[0] = 1;
 menu_on[1] = 1;
 menu_on[2] = 1;
-menu_on[3] = 0;
+menu_on[3] = 1;
 menu_on[4] = 0;
 menu_on[5] = 1;
 menu_on[6] = 1;

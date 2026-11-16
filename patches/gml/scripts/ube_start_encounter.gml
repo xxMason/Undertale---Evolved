@@ -32,12 +32,38 @@ SCR_GAMESTART();
 global.inbattle = 0;
 global.ube_last = idx;
 ube_apply_player();
-// Encounter adapters. 0 = generic_battlegroup.
-switch (global.ube_enc_adapter[idx])
+var enc_id = "";
+if (idx >= 1000)
 {
-    case 0:
-        global.battlegroup = global.ube_enc_group[idx];
-        break;
+    // Custom boss (Battle Creator). Type and battlegroup 777 have no case in the
+    // original scripts, so obj_battlecontroller sets the battle up with no monster and
+    // obj_ube_input's Room Start then adds obj_ube_boss and its music.
+    ube_load_boss(global.ube_cbl_file[idx - 1000]);
+    global.ube_custom = 1;
+    global.ube_last_name = global.ube_cb_name;
+    enc_id = "custom:" + global.ube_cbl_file[idx - 1000];
+    global.battlegroup = 777;
+    global.monstertype[0] = 777;
+    global.monstertype[1] = 0;
+    global.monstertype[2] = 0;
+    global.battlelv = 0;
+    global.actfirst = 0;
+    global.extraintro = 0;
+    global.msc = 0;
+    global.msg[0] = global.ube_cb_intro;
+}
+else
+{
+    global.ube_custom = 0;
+    global.ube_last_name = global.ube_enc_name[idx];
+    enc_id = global.ube_enc_id[idx];
+    // Encounter adapters. 0 = generic_battlegroup.
+    switch (global.ube_enc_adapter[idx])
+    {
+        case 0:
+            global.battlegroup = global.ube_enc_group[idx];
+            break;
+    }
 }
 // Training Mode helper exists only while Training Mode is on.
 if (global.ube_training == 1)
@@ -60,5 +86,5 @@ global.ube_t_lethal = 0;
 global.currentroom = room_ube_menu;
 global.ube_result = 0;
 global.ube_state = 3;
-ube_log("STATE IN_BATTLE id=" + global.ube_enc_id[idx] + " battlegroup=" + string(global.battlegroup) + " lv=" + string(global.lv) + " hp=" + string(global.hp) + "/" + string(global.maxhp) + " training=" + string(global.ube_training));
+ube_log("STATE IN_BATTLE id=" + enc_id +" battlegroup=" + string(global.battlegroup) + " lv=" + string(global.lv) + " hp=" + string(global.hp) + "/" + string(global.maxhp) + " training=" + string(global.ube_training));
 room_goto(room_battle);

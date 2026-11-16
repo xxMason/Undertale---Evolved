@@ -2,6 +2,10 @@
 // joypads, so the battle itself runs completely unmodified.
 if (room != last_room)
 {
+    if (last_room == room_battle && (global.ube_test == "custom" || global.ube_test == "custom_spare"))
+    {
+        ube_log("CUSTOM bullets_seen=" + string(cb_seen > 0) + " max=" + string(cb_seen));
+    }
     if (room == room_battle)
     {
         battles += 1;
@@ -18,7 +22,7 @@ if (room == room_battle || room == room_gameover)
         shot = 1;
         screen_save("ube_shot_battle.png");
     }
-    if ((global.ube_test == "train" || global.ube_test == "gear") && room == room_battle)
+    if ((global.ube_test == "train" || global.ube_test == "gear" || global.ube_test == "custom_spare") && room == room_battle)
     {
         // The runner ignores simulated keys for a few seconds after start-up, and how
         // long varies. Probe with an unused key (Q); rt counts frames since keys work.
@@ -41,6 +45,89 @@ if (room == room_battle || room == room_gameover)
         else
         {
             rt += 1;
+        }
+    }
+    if ((global.ube_test == "custom" || global.ube_test == "custom_spare") && room == room_battle)
+    {
+        if (instance_number(obj_ube_bullet) > cb_seen)
+        {
+            cb_seen = instance_number(obj_ube_bullet);
+        }
+        if (t == 150 || t == 320 || t == 520)
+        {
+            screen_save("ube_shot_custom" + string(t) + ".png");
+        }
+    }
+    if (global.ube_test == "custom_spare" && room == room_battle && kready == 1)
+    {
+        // Closed loop through the real menus: ACT -> target -> first custom act until
+        // enough mercy points, then MERCY -> Spare. Everything else is "confirm".
+        // Screenshots of the target list and the ACT menu once each has settled.
+        if (global.bmenuno == cs_menu)
+        {
+            cs_menu_t += 1;
+        }
+        else
+        {
+            cs_menu = global.bmenuno;
+            cs_menu_t = 0;
+        }
+        if (cs_menu_t == 6 && cs_menu == 2 && cs_shot2 == 0)
+        {
+            cs_shot2 = 1;
+            screen_save("ube_shot_custom_target.png");
+        }
+        if (cs_menu_t == 6 && cs_menu == 10 && cs_shot10 == 0)
+        {
+            cs_shot10 = 1;
+            screen_save("ube_shot_custom_act.png");
+        }
+        cs_t += 1;
+        var want = 90;
+        var pts = 0;
+        if (instance_exists(obj_ube_boss))
+        {
+            pts = obj_ube_boss.spare_points;
+        }
+        if (global.myfight == 0 && global.mnfight == 0)
+        {
+            if (pts < global.ube_cb_spare_need)
+            {
+                if (global.bmenuno == 0)
+                {
+                    if (global.bmenucoord[0] != 1)
+                    {
+                        want = vk_right;
+                    }
+                }
+                else if (global.bmenuno == 10)
+                {
+                    if (global.bmenucoord[2] != 3)
+                    {
+                        want = vk_right;
+                    }
+                }
+                else if (global.bmenuno != 2)
+                {
+                    want = 88;
+                }
+            }
+            else if (global.bmenuno == 0)
+            {
+                if (global.bmenucoord[0] != 3)
+                {
+                    want = vk_right;
+                }
+            }
+        }
+        if ((cs_t mod 12) == 1)
+        {
+            cs_key = want;
+            keyboard_key_press(cs_key);
+        }
+        if ((cs_t mod 12) == 6)
+        {
+            keyboard_key_release(cs_key);
         }
     }
     if (global.ube_test == "train" && room == room_battle)
@@ -110,11 +197,11 @@ if (room == room_battle || room == room_gameover)
             room_goto(room_ube_menu);
         }
     }
-    if ((t mod 8) == 0 && (global.ube_test != "gear" || gear_go == 1))
+    if ((t mod 8) == 0 && (global.ube_test != "gear" || gear_go == 1) && (global.ube_test != "custom_spare" || room != room_battle))
     {
         keyboard_key_press(ord("Z"));
     }
-    if ((t mod 8) == 4)
+    if ((t mod 8) == 4 && (global.ube_test != "custom_spare" || room != room_battle))
     {
         keyboard_key_release(ord("Z"));
     }

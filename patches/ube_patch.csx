@@ -61,6 +61,22 @@ var trainer = NewObject("obj_ube_trainer", true);
 trainer.Depth = -9999;
 var scrHitboxes = NewScript("ube_draw_hitboxes");
 
+// Battle Creator runtime: a data-driven monster and its bullet. Both inherit from the
+// game's own parents, so targeting, collision, damage and end-of-turn clean-up are the
+// original code. Type/battlegroup 777 must be unused so no original case matches it.
+const int CustomType = 777;
+foreach (string scriptName in new[] { "gml_Script_SCR_TEXT", "gml_Script_scr_battlegroup", "gml_Script_scr_monstersetup" })
+{
+    string txt = GetDecompiledText(Data.Code.ByName(scriptName));
+    if (txt.Contains("case " + CustomType + ":") || txt.Contains("case " + (1000 + CustomType) + ":") || txt.Contains("case " + (3000 + CustomType) + ":") || txt.Contains("== " + CustomType + ")"))
+        throw new Exception("Custom monster type " + CustomType + " collides with " + scriptName);
+}
+var customBoss = NewObject("obj_ube_boss", false);
+customBoss.ParentId = Data.GameObjects.ByName("obj_monsterparent") ?? throw new Exception("obj_monsterparent missing");
+var customBullet = NewObject("obj_ube_bullet", false);
+customBullet.ParentId = Data.GameObjects.ByName("blt_parent") ?? throw new Exception("blt_parent missing");
+var scrLoadBoss = NewScript("ube_load_boss");
+
 // Hitbox list for Training Mode: every object that has a collision event with obj_heart
 // (children are covered by GML's "with"). Generated here so nothing is assumed.
 var heartObj = Data.GameObjects.ByName("obj_heart");
@@ -105,7 +121,9 @@ var scrSave = NewScript("ube_save_config");
 foreach (string fn in new[] { "file_text_open_append", "file_text_write_string", "file_text_writeln", "file_text_close",
     "ini_open", "ini_close", "ini_read_real", "ini_read_string", "ini_write_real", "screen_save", "game_end",
     "keyboard_key_press", "keyboard_key_release", "mouse_check_button_pressed", "window_set_caption",
-    "variable_global_exists", "steam_initialised", "room_get_name", "keyboard_check_direct", "sprite_get_width", "sprite_get_height", "sprite_get_xoffset", "sprite_get_yoffset", "draw_sprite_ext", "min", "max", "draw_text_transformed", "string_width", "clamp" })
+    "variable_global_exists", "steam_initialised", "room_get_name", "keyboard_check_direct", "sprite_get_width", "sprite_get_height", "sprite_get_xoffset", "sprite_get_yoffset", "draw_sprite_ext", "min", "max", "asset_get_index", "asset_get_type", "sprite_add", "object_get_sprite",
+    "lengthdir_x", "lengthdir_y", "point_direction", "string_upper", "string_copy", "string_pos", "string_length",
+    "file_exists", "file_delete", "random", "floor", "round", "instance_exists", "caster_loop", "draw_text_transformed", "string_width", "clamp" })
     Data.Functions.EnsureDefined(fn, Data.Strings);
 
 // ---- 3. Encounter catalogue generated from config/encounters.json ------------------------
@@ -185,6 +203,13 @@ importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Create, Data), Gm
 importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Step, (uint)1, Data), Gml("objects/obj_ube_input_Step_1.gml"));
 
 importGroup.QueueReplace(scrHitboxes, hitboxGml.ToString());
+importGroup.QueueReplace(scrLoadBoss, Gml("scripts/ube_load_boss.gml"));
+importGroup.QueueReplace(customBoss.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_boss_Create_0.gml"));
+importGroup.QueueReplace(customBoss.EventHandlerFor(EventType.Step, (uint)0, Data), Gml("objects/obj_ube_boss_Step_0.gml"));
+foreach (uint alarmNo in new uint[] { 3, 5, 6, 8 })
+    importGroup.QueueReplace(customBoss.EventHandlerFor(EventType.Alarm, alarmNo, Data), Gml("objects/obj_ube_boss_Alarm_" + alarmNo + ".gml"));
+importGroup.QueueReplace(customBoss.EventHandlerFor(EventType.Destroy, Data), Gml("objects/obj_ube_boss_Destroy_0.gml"));
+importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Other, (uint)4, Data), Gml("objects/obj_ube_input_Other_4.gml"));
 importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_trainer_Create_0.gml"));
 importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Other, (uint)4, Data), Gml("objects/obj_ube_trainer_Other_4.gml"));
 importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Step, (uint)2, Data), Gml("objects/obj_ube_trainer_Step_2.gml"));

@@ -57,7 +57,7 @@ namespace Ube
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|win|lose|lose_then_win] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|custom|custom_spare|win|lose|lose_then_win] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
@@ -93,6 +93,7 @@ namespace Ube
             Directory.CreateDirectory(saveDir);
             string ini = Path.Combine(saveDir, "ube_config.ini");
             ClearStoryMemory(saveDir);
+            InstallBosses(saveDir);
             if (profileArg != null) ApplyProfile(profileArg, ini);
             IniSet(ini, "Test", "Scenario", selftest ?? "");
             IniSet(ini, "Test", "Power", sweepPower ? "1" : "0");
@@ -170,6 +171,55 @@ namespace Ube
                 string f = Path.Combine(saveDir, n);
                 if (File.Exists(f)) { File.Delete(f); Log("Cleared simulator story memory: " + n); }
             }
+        }
+
+        // Battle Creator: copies the example bosses from the project's bosses\ folder into
+        // <save folder>\custom (without overwriting a boss the user has edited there unless
+        // the project copy is newer), then writes custom\index.ini so the game can list them.
+        static void InstallBosses(string saveDir)
+        {
+            string custom = Path.Combine(saveDir, "custom");
+            Directory.CreateDirectory(custom);
+            string source = Path.Combine(root, "bosses");
+            if (Directory.Exists(source))
+            {
+                foreach (string src in Directory.GetFiles(source))
+                {
+                    string ext = Path.GetExtension(src).ToLowerInvariant();
+                    if (ext != ".ini" && ext != ".png") continue;
+                    string dst = Path.Combine(custom, Path.GetFileName(src));
+                    if (!File.Exists(dst) || File.GetLastWriteTimeUtc(src) > File.GetLastWriteTimeUtc(dst))
+                        File.Copy(src, dst, true);
+                }
+            }
+            var lines = new List<string> { "[Index]" };
+            int n = 0;
+            foreach (string f in Directory.GetFiles(custom, "*.ini").OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+            {
+                string name = Path.GetFileName(f);
+                if (name.Equals("index.ini", StringComparison.OrdinalIgnoreCase)) continue;
+                string display = IniGetString(f, "Boss", "Name", Path.GetFileNameWithoutExtension(f));
+                lines.Add("File" + n + "=\"" + name + "\"");
+                lines.Add("Name" + n + "=\"" + display.Replace("\"", "'") + "\"");
+                n++;
+            }
+            lines.Insert(1, "Count=\"" + n + "\"");
+            File.WriteAllLines(Path.Combine(custom, "index.ini"), lines);
+            Log("Custom bosses available: " + n + " (" + custom + ")");
+        }
+
+        static string IniGetString(string ini, string section, string key, string def)
+        {
+            string cur = "";
+            foreach (string raw in File.ReadAllLines(ini))
+            {
+                string l = raw.Trim();
+                if (l.StartsWith("[") && l.EndsWith("]")) { cur = l.Substring(1, l.Length - 2); continue; }
+                int eq = l.IndexOf('=');
+                if (eq < 0 || cur != section || l.Substring(0, eq).Trim() != key) continue;
+                return l.Substring(eq + 1).Trim().Trim('"');
+            }
+            return def;
         }
 
         // ---------------------------------------------------------------- sweep
@@ -586,6 +636,8 @@ namespace Ube
             string[] expect;
             if (scenario == "menu") expect = new[] { "BOOT ", "EXIT" };
             else if (scenario == "keys") expect = new[] { "BOOT ", "KEYS check=1 direct=1 timeup=1", "EXIT" };
+            else if (scenario == "custom") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:", "CUSTOM boss=", "CUSTOM bullets_seen=1", "STATE VICTORY kills=1", "EXIT" };
+            else if (scenario == "custom_spare") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:", "CUSTOM boss=", "CUSTOM act=Talk points=1/2", "CUSTOM act=Talk points=2/2", "CUSTOM spared", "STATE VICTORY kills=0", "EXIT" };
             else if (scenario == "train") expect = new[] { "BOOT ", "STATE IN_BATTLE id=froggit battlegroup=4 lv=1 hp=1/20 training=1", "TRAIN speed=60 trainer=1", "TRAIN retry", "STATE IN_BATTLE id=froggit", "STATE VICTORY", "TRAIN hits=", "TRAIN survived_lethal_hit", "EXIT" };
             else if (scenario == "gear") expect = new[] { "BOOT ", "STATE IN_BATTLE id=froggit battlegroup=4 lv=1 hp=5/20", "GEAR weapon=52 wstr=99 armor=53 adef=99 item0=11 item1=1 item2=0 hp=5", "GEAR used hp=20/20 item0=1", "STATE ABORTED", "EXIT" };
             else if (scenario == "wasd") expect = new[] { "BOOT ", "WASDCHK off sel=0", "SETTINGS movement=1", "WASDCHK on sel=0", "STATE IN_BATTLE", "WASDCHK battle timeup=1", "STATE ", "EXIT" };

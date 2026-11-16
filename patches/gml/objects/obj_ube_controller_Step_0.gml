@@ -106,7 +106,7 @@ if (hold > 15 && (hold mod 2) == 0)
 var i;
 row_x = 120;
 vis = 99;
-if (page != 1)
+if (page != 1 && page != 8)
 {
     scroll = 0;
 }
@@ -195,6 +195,19 @@ if (page == 3)
     row_on[0] = 1;
     row_on[1] = 1;
     row_on[2] = 1;
+}
+if (page == 8)
+{
+    // Custom Battles: one row per boss file, then BACK.
+    row_x = 96;
+    row_y0 = 130;
+    row_h = 34;
+    vis = 7;
+    row_n = global.ube_cbl_count + 1;
+    for (i = 0; i < row_n; i += 1)
+    {
+        row_on[i] = 1;
+    }
 }
 if (page == 7)
 {
@@ -476,6 +489,18 @@ if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd
             }
             global.ube_lv = 20;
             global.ube_hp = 0;
+            if (global.ube_test == "custom" || global.ube_test == "custom_spare")
+            {
+                // First custom boss. "custom" kills it; "custom_spare" talks it down.
+                if (global.ube_cbl_count == 0)
+                {
+                    ube_log("CUSTOM none installed");
+                    game_end();
+                    exit;
+                }
+                ube_start_encounter(1000);
+                exit;
+            }
             if (global.ube_test == "train")
             {
                 // Training Mode at 1 HP: every hit would be lethal without infinite HP.
@@ -584,6 +609,13 @@ if (page == 0)
         {
             page = 7;
             sel = 0;
+            ptimer = 0;
+        }
+        else if (sel == 3)
+        {
+            page = 8;
+            sel = 0;
+            scroll = 0;
             ptimer = 0;
         }
         else if (sel == 5)
@@ -739,6 +771,25 @@ if (page == 2)
     exit;
 }
 
+if (page == 8)
+{
+    if (k_back || (k_ok && sel == global.ube_cbl_count))
+    {
+        snd_play(snd_select);
+        page = 0;
+        sel = 3;
+        ptimer = 0;
+        exit;
+    }
+    if (k_ok)
+    {
+        snd_play(snd_select);
+        // Custom bosses use encounter numbers from 1000 up.
+        ube_start_encounter(1000 + sel);
+    }
+    exit;
+}
+
 if (page == 7)
 {
     var td = k_right - k_left;
@@ -834,7 +885,11 @@ if (page == 3)
             exit;
         }
         global.ube_state = 0;
-        if (sel == 1)
+        if (sel == 1 && global.ube_last >= 1000)
+        {
+            page = 8;
+        }
+        else if (sel == 1)
         {
             page = 1;
             focus = 2;

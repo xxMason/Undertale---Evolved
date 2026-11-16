@@ -28,7 +28,7 @@ $before = Get-Snapshot $watched
 $results = @()
 $profile = Join-Path $root 'profiles\default.json'
 
-foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'gear', 'train', 'win', 'lose', 'lose_then_win') {
+foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'gear', 'train', 'custom', 'custom_spare', 'win', 'lose', 'lose_then_win') {
     # The scenarios drive the game with simulated key presses, which the runner drops if
     # its window loses focus (for example when someone uses the PC during the run). A
     # failed scenario is retried once, and the report says so when that happens.

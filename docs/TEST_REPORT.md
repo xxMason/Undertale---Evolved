@@ -26,6 +26,8 @@ same independently (hash, size and modified time) around the whole run.
 | A configured item works through the real ITEM menu | `GEAR used hp=20/20 item0=1`: Butterscotch Pie healed 5 to 20 HP and left the inventory |
 | Training Mode: game speed, retry key, infinite HP and hit counting in a real fight at 1 HP | `TRAIN speed=60 trainer=1`, `TRAIN retry`, `STATE VICTORY ... hp=1/20`, `TRAIN hits=7 dmg=7 lethal=7`, `TRAIN survived_lethal_hit`; screenshots show the status line and hitbox outlines |
 | Authentic Mode has no trainer object | every other self-test logs `training=0`, and the trainer is only created when Training Mode is on |
+| Custom boss from a file fights as a real monster and can be killed | `CUSTOM boss=Sentinel hp=150 atk=5 def=0 acts=2 attacks=4`, `CUSTOM bullets_seen=1 max=15`, `STATE VICTORY kills=1 ... gold=40`; screenshots show its own sprite, intro text and bullets |
+| Custom boss can be talked down and spared through the real ACT and MERCY menus | `CUSTOM act=Talk points=1/2`, `points=2/2`, `CUSTOM spared`, `STATE VICTORY kills=0`; screenshots of the target list and ACT menu |
 | LOVE and starting HP reach the original battle | battle screenshot shows `LV 1`, `HP 01 / 20`; LV 20 run shows 99/99 |
 | Winning returns to the results screen | `STATE VICTORY kills=1 xp=3 gold=2 hp=29/36` (EXP and gold from original code) |
 | Losing plays the original game over and returns | `STATE DEFEAT hp=0` |
@@ -119,6 +121,13 @@ Consequences to be aware of:
   outlined.
 - **HP lost** counts HP actually removed, so a hit that would have done more than your
   remaining HP is under-counted.
+- **Custom bosses beyond the example.** Only `sentinel.ini` was run. Across the two test
+  fights its attacks were chosen in order, but which of the four patterns actually ran was
+  not recorded, so `ring` and `wall` in particular are unconfirmed. Losing to a custom
+  boss, the Insult ACT, the Check text, fleeing, other box sizes, game sprites as the boss
+  image and a boss with no speech lines were not exercised.
+- **Test flakiness.** In the last full run one scenario (`wasd`) failed on its first
+  attempt and passed on the automatic retry.
 - **WASD with a real keyboard.** The tests press W/A/S/D through simulated keys. The
   helper may add up to one frame of input delay in WASD mode; this was not measured.
 - **Mouse support** in the menus, including clicking tabs.
@@ -138,7 +147,9 @@ Consequences to be aware of:
 - HP override above the normal maximum.
 - All 98 catalogue entries are enabled, but 11 of them have unverified endings (see
   the sweep section).
-- Custom Battles and Statistics are shown greyed out.
+- Statistics is shown greyed out.
+- Custom Battles plays bosses defined in files (`docs/BATTLE_CREATOR.md`). There is no
+  in-game editor, phases, or custom music yet.
 - Training Mode has infinite HP, game speed, retry key, hitboxes and hit counting. Attack
   and phase selection, checkpoints, saved statistics and training presets are not built.
 - The ERROR state exists but nothing raises it.

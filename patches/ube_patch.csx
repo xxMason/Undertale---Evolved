@@ -86,7 +86,7 @@ var scrStart = NewScript("ube_start_encounter");
 foreach (string fn in new[] { "file_text_open_append", "file_text_write_string", "file_text_writeln", "file_text_close",
     "ini_open", "ini_close", "ini_read_real", "ini_read_string", "ini_write_real", "screen_save", "game_end",
     "keyboard_key_press", "keyboard_key_release", "mouse_check_button_pressed", "window_set_caption",
-    "variable_global_exists", "steam_initialised", "draw_text_transformed", "string_width", "clamp" })
+    "variable_global_exists", "steam_initialised", "room_get_name", "keyboard_check_direct", "draw_text_transformed", "string_width", "clamp" })
     Data.Functions.EnsureDefined(fn, Data.Strings);
 
 // ---- 3. Encounter catalogue generated from config/encounters.json ------------------------
@@ -133,9 +133,11 @@ using (var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "config"
         cat.AppendLine($"global.ube_enc_name[{n}] = {GmlString(e.GetProperty("displayName").GetString())};");
         cat.AppendLine($"global.ube_enc_areaidx[{n}] = {areaIdx};");
         cat.AppendLine($"global.ube_enc_cat[{n}] = {catIdx};");
-        cat.AppendLine($"global.ube_enc_group[{n}] = {e.GetProperty("requiredGlobals").GetProperty("battlegroup").GetInt32()};");
+        cat.AppendLine($"global.ube_enc_group[{n}] = {e.GetProperty("battlegroup").GetInt32()};");
         cat.AppendLine($"global.ube_enc_adapter[{n}] = {adapterId};");
-        cat.AppendLine($"global.ube_enc_enabled[{n}] = {(e.GetProperty("enabled").GetBoolean() ? 1 : 0)};");
+        // 0 = disabled, 1 = verified to the end, 2 = starts and runs but ending unverified.
+        int enabledVal = !e.GetProperty("enabled").GetBoolean() ? 0 : e.GetProperty("status").GetString() == "verified" ? 1 : 2;
+        cat.AppendLine($"global.ube_enc_enabled[{n}] = {enabledVal};");
         n++;
     }
     cat.AppendLine($"global.ube_enc_count = {n};");

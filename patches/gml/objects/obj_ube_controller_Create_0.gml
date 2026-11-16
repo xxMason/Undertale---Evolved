@@ -18,6 +18,7 @@ if (!variable_global_exists("ube_boot"))
     global.ube_lv = clamp(floor(ini_read_real("Player", "LOVE", 1)), 1, 20);
     global.ube_hp = floor(ini_read_real("Player", "HP", 0));
     global.ube_test = ini_read_string("Test", "Scenario", "");
+    global.ube_sweep_i = floor(ini_read_real("Test", "Start", 0));
     global.ube_wasd = clamp(floor(ini_read_real("Settings", "Movement", 0)), 0, 1);
     ini_close();
     instance_create(0, 0, obj_ube_input);
@@ -40,6 +41,8 @@ row_n = 0;
 // Fight Select: focus 0 = area tabs, 1 = Monsters/Bosses tabs, 2 = fight list.
 focus = 2;
 fn = 0;
+scroll = 0;
+vis = 99;
 res_win = 0;
 res_kills = 0;
 res_xp = 0;

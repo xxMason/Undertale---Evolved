@@ -63,6 +63,10 @@ var i;
 var label;
 for (i = 0; i < row_n; i += 1)
 {
+    if (i < scroll || i >= scroll + vis)
+    {
+        continue;
+    }
     label = "";
     if (page == 0)
     {
@@ -76,6 +80,10 @@ for (i = 0; i < row_n; i += 1)
             if (global.ube_enc_enabled[flist[i]] == 0)
             {
                 label += "  (not yet available)";
+            }
+            if (global.ube_enc_enabled[flist[i]] == 2)
+            {
+                label += " *";
             }
         }
         else
@@ -136,9 +144,18 @@ for (i = 0; i < row_n; i += 1)
     else if (sel == i && (page != 1 || focus == 2))
     {
         draw_set_color(c_yellow);
-        draw_sprite(spr_heart, 0, row_x - 32, row_y0 + (i * row_h) + 1);
+        draw_sprite(spr_heart, 0, row_x - 32, row_y0 + ((i - scroll) * row_h) + 1);
     }
-    draw_text(row_x, row_y0 + (i * row_h), label);
+    draw_text(row_x, row_y0 + ((i - scroll) * row_h), label);
+}
+draw_set_color(c_gray);
+if (scroll > 0)
+{
+    draw_text(470, row_y0, "(more above)");
+}
+if (row_n > scroll + vis)
+{
+    draw_text(470, row_y0 + ((vis - 1) * row_h), "(more below)");
 }
 
 if (page == 1)
@@ -152,7 +169,7 @@ if (page == 1)
             draw_set_color(c_yellow);
             if (focus == 0)
             {
-                draw_sprite(spr_heart, 0, tabx[i] - 19, 89);
+                draw_rectangle(tabx[i], 106, tabx[i] + tabw[i], 107, false);
             }
         }
         draw_text(tabx[i], 88, "[" + global.ube_area_name[i] + "]");
@@ -167,7 +184,7 @@ if (page == 1)
                 draw_set_color(c_yellow);
                 if (focus == 1)
                 {
-                    draw_sprite(spr_heart, 0, ctabx[i] - 19, 125);
+                    draw_rectangle(ctabx[i], 142, ctabx[i] + ctabw[i], 143, false);
                 }
             }
             draw_text(ctabx[i], 124, ctxt[i]);
@@ -234,6 +251,7 @@ else if (page == 2)
 else if (page == 1)
 {
     draw_text(40, 420, "[UP/DOWN] Tabs and fights  [LEFT/RIGHT] Switch tab  [Z] Select  [X] Back");
+    draw_text(40, 438, "* starts and runs, but its ending has not been verified");
 }
 else
 {

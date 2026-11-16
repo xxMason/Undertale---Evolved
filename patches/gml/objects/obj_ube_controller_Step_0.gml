@@ -11,6 +11,12 @@ if (page == 4)
         {
             res_win = 0;
         }
+        if (global.ube_result == 3)
+        {
+            // Only the sweep test aborts a battle.
+            res_win = 0;
+            ube_log("STATE ABORTED");
+        }
         res_kills = global.kills;
         res_xp = global.xp - global.ube_xp0;
         res_gold = global.gold;
@@ -72,6 +78,11 @@ if (hold > 15 && (hold mod 2) == 0)
 // ---- Row layout for the current page (shared by mouse handling and Draw)
 var i;
 row_x = 120;
+vis = 99;
+if (page != 1)
+{
+    scroll = 0;
+}
 if (page == 0)
 {
     row_y0 = 120;
@@ -86,6 +97,7 @@ if (page == 1)
 {
     row_y0 = 176;
     row_h = 32;
+    vis = 7;
     // Fights in the current area tab and Monsters/Bosses tab, then BACK.
     fn = 0;
     for (i = 0; i < global.ube_enc_count; i += 1)
@@ -93,7 +105,7 @@ if (page == 1)
         if (global.ube_enc_areaidx[i] == global.ube_tab_area && global.ube_enc_cat[i] == global.ube_tab_cat)
         {
             flist[fn] = i;
-            row_on[fn] = global.ube_enc_enabled[i];
+            row_on[fn] = (global.ube_enc_enabled[i] > 0);
             fn += 1;
         }
     }
@@ -101,16 +113,16 @@ if (page == 1)
     row_n = fn + 1;
     // Tab positions (shared with Draw and the mouse).
     scr_setfont(fnt_maintext);
-    var tx = 48;
+    var tx = 32;
     for (i = 0; i < global.ube_area_count; i += 1)
     {
         tabx[i] = tx;
         tabw[i] = string_width("[" + global.ube_area_name[i] + "]");
-        tx += tabw[i] + 24;
+        tx += tabw[i] + 12;
     }
     ctxt[0] = "[MONSTERS]";
     ctxt[1] = "[BOSSES]";
-    tx = 48;
+    tx = 32;
     for (i = 0; i < 2; i += 1)
     {
         ctabx[i] = -1;
@@ -161,8 +173,8 @@ my_prev = mouse_y;
 var mrow = -1;
 if (mouse_x >= 60 && mouse_x <= 580 && mouse_y >= row_y0)
 {
-    mrow = floor((mouse_y - row_y0) / row_h);
-    if (mrow >= row_n)
+    mrow = floor((mouse_y - row_y0) / row_h) + scroll;
+    if (mrow >= row_n || (mrow - scroll) >= vis)
     {
         mrow = -1;
     }
@@ -320,6 +332,39 @@ if (k_up)
     }
     until (row_on[sel] == 1);
     snd_play(snd_squeak);
+}
+
+// ---- Keep the selected row inside the visible window (long fight lists scroll)
+if (sel < scroll)
+{
+    scroll = sel;
+}
+if (sel >= scroll + vis)
+{
+    scroll = (sel - vis) + 1;
+}
+
+// ---- Sweep test: start every catalogue entry in turn, enabled or not.
+if (global.ube_test == "sweep")
+{
+    if ((page == 0 || page == 3) && ptimer == 5)
+    {
+        if (page == 3)
+        {
+            global.ube_sweep_i += 1;
+        }
+        if (global.ube_sweep_i >= global.ube_enc_count)
+        {
+            ube_log("SWEEP done");
+            game_end();
+            exit;
+        }
+        global.ube_lv = 20;
+        global.ube_hp = 0;
+        ube_log("SWEEP start i=" + string(global.ube_sweep_i) + " id=" + global.ube_enc_id[global.ube_sweep_i]);
+        ube_start_encounter(global.ube_sweep_i);
+    }
+    exit;
 }
 
 // ---- Automated self-test hooks (only when the launcher wrote [Test] Scenario)

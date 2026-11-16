@@ -33,6 +33,38 @@ same independently (hash, size and modified time) around the whole run.
 | Missing or unknown game files are refused | exit code 2, nothing copied |
 | No game assets or binaries tracked by Git | `git ls-files` check |
 
+## Encounter sweep (all 98 catalogue entries)
+
+`UltimateBattleEngine.exe --sweep` starts every catalogue entry at LV 20, speeds the game
+up, presses confirm repeatedly (which attacks every turn) and records what happens.
+`scripts\apply-sweep.ps1` writes the result into `config\encounters.json`. The game did
+not crash or exit on any entry, and the originals were unchanged afterwards.
+
+| Result | Count | Meaning | In the menu |
+|---|---|---|---|
+| verified | 69 | Fought to a victory and returned to the results screen | enabled |
+| starts | 28 | The battle starts and runs, but ended in a defeat or was still going at the time limit, so its ending is unknown | enabled, marked `*` |
+| needs-adapter | 1 | Left the battle for a story room (`bg58`, Undyne's second battle object) | disabled |
+
+The 28 "starts" entries are mostly bosses that cannot be beaten by attacking alone or in
+the time limit: Toriel, Papyrus, Mad Dummy, Monster Kid, Undyne, Undyne the Undying,
+Muffet, So Sorry, the three Mettaton battles, Mettaton EX, Sans, both Asgore entries,
+both Asriel entries, RG 01 and RG 02, the five True Lab amalgamates, Glyde, and four
+ordinary groups where the idle player died. For these, what happens when the fight
+really ends (cutscenes, room changes, a game-over that expects a save) is **not known**.
+
+Limits of the sweep:
+
+- It proves a fight starts, runs on original code and, for "verified", returns cleanly
+  after a kill. It does not check that attacks, dialogue or ACT options behave exactly
+  as in the story, and it never spares or flees.
+- Every fight starts from a new-game state. Fights that change with story flags or kill
+  counts (for example genocide variants) run in whatever form that state gives.
+- Display names come from the names the game itself reported, with five corrected by
+  hand where the game reports a placeholder.
+- Not in the catalogue: battlegroups 1, 19, 21, 69-75, 87-90 and Photoshop Flowey
+  (reasons in `config/encounters.json`).
+
 ## Verified by inspection only
 
 - The isolation gate's refusal paths (overlapping folders, Steam files present, wrong
@@ -64,7 +96,8 @@ same independently (hash, size and modified time) around the whole run.
 
 - Weapon, armour and inventory selection (fixed at Stick, Bandage, empty).
 - HP override above the normal maximum.
-- Only Froggit is enabled. Toriel is listed and disabled.
+- 97 of 98 catalogue entries are enabled, but 28 of them have unverified endings (see
+  the sweep section).
 - Training Mode, Custom Battles, Statistics and Settings are shown greyed out.
 - The ERROR state exists but nothing raises it.
-- The fight list does not scroll; fine for two entries, not for the full roster.
+- Scrolling of long fight lists was only seen at the top position in screenshots.

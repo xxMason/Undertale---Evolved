@@ -1,54 +1,1144 @@
 {
-  "schema": 1,
-  "notes": "Data-driven encounter catalogue. patches/ube_patch.csx generates the in-game catalogue from this file at build time. All IDs were read from the installed Undertale v1.08 data.win, never assumed.",
-  "adapters": {
-    "generic_battlegroup": "Reset state with SCR_GAMESTART, apply the player configuration, set global.battlegroup and global.currentroom, then room_goto(room_battle). The original obj_battlecontroller does everything else."
-  },
-  "areas": [
-    { "id": "ruins", "label": "RUINS", "tabs": ["monsters", "bosses"] },
-    { "id": "snowdin", "label": "SNOWDIN", "tabs": ["monsters", "bosses"] },
-    { "id": "hotland", "label": "HOTLANDS", "tabs": ["monsters", "bosses"] },
-    { "id": "core", "label": "CORE", "tabs": ["monsters", "bosses"] },
-    { "id": "judgement_hall", "label": "JUDGEMENT HALL", "tabs": ["bosses"] },
-    { "id": "barrier", "label": "BARRIER", "tabs": ["bosses"] }
-  ],
-  "areaNotes": "Fight Select shows one tab per area and, under it, only the Monsters/Bosses tabs listed here. An encounter with classification 'enemy' goes under Monsters; 'boss' or 'miniboss' under Bosses. The build fails if an encounter points at an area or tab that is not declared.",
-  "encounters": [
-    {
-      "id": "froggit",
-      "displayName": "Froggit",
-      "classification": "enemy",
-      "area": "ruins",
-      "routeRequirements": "none",
-      "requiredGlobals": { "battlegroup": 4 },
-      "requiredFlags": {},
-      "startRoom": "room_battle",
-      "adapter": "generic_battlegroup",
-      "specialMechanics": "none",
-      "victoryConditions": "Monster HP reaches 0; obj_battlecontroller sets won = 1 and returns to global.currentroom.",
-      "defeatConditions": "Player HP reaches 0; scr_gameoverb goes to room_gameover, then obj_gameover returns to global.currentroom.",
-      "mercyConditions": "Compliment or Threaten, then Spare. Fleeing also ends the battle (always succeeds with the Bandage equipped, as in the original).",
-      "cleanup": "Menu controller stops all audio, clears global.inbattle and re-runs SCR_GAMESTART before the next battle.",
-      "status": "verified",
-      "enabled": true
-    },
-    {
-      "id": "toriel",
-      "displayName": "Toriel",
-      "classification": "boss",
-      "area": "ruins",
-      "routeRequirements": "none (genocide dialogue variant depends on kill count)",
-      "requiredGlobals": { "battlegroup": 22 },
-      "requiredFlags": {},
-      "startRoom": "room_battle",
-      "adapter": "generic_battlegroup",
-      "specialMechanics": "Scripted spare sequence, attacks avoid the player at low HP, post-battle cutscene expects the overworld room. Needs its own adapter.",
-      "victoryConditions": "not yet analysed",
-      "defeatConditions": "not yet analysed",
-      "mercyConditions": "not yet analysed",
-      "cleanup": "not yet analysed",
-      "status": "planned",
-      "enabled": false
-    }
-  ]
+    "schema":  2,
+    "notes":  "Data-driven encounter catalogue. patches/ube_patch.csx generates the in-game catalogue from this file at build time. Battlegroup numbers were read from scr_battlegroup in the installed Undertale v1.08 data.win. status/enabled/displayName are filled in from the automated sweep by scripts/apply-sweep.ps1: verified = fought to a victory and returned to the menu; starts = battle starts and runs but its ending is unverified; needs-adapter = left the battle for a story room, crashed or ended the game.",
+    "omitted":  "Battlegroups not listed: 1 (debug test monsters), 19 (empty), 21 (duplicate Loox), 69-75 (Mettaton bomb-defusal sub-battles), 87-90 (Lost Souls, part of the Asriel fight). Photoshop Flowey does not use room_battle.",
+    "adapters":  {
+                     "generic_battlegroup":  "Reset state with SCR_GAMESTART, apply the player configuration, set global.battlegroup and global.currentroom, then room_goto(room_battle)."
+                 },
+    "areas":  [
+                  {
+                      "id":  "ruins",
+                      "label":  "RUINS",
+                      "tabs":  [
+                                   "monsters",
+                                   "bosses"
+                               ]
+                  },
+                  {
+                      "id":  "snowdin",
+                      "label":  "SNOWDIN",
+                      "tabs":  [
+                                   "monsters",
+                                   "bosses"
+                               ]
+                  },
+                  {
+                      "id":  "waterfall",
+                      "label":  "WATERFALL",
+                      "tabs":  [
+                                   "monsters",
+                                   "bosses"
+                               ]
+                  },
+                  {
+                      "id":  "hotland",
+                      "label":  "HOTLANDS",
+                      "tabs":  [
+                                   "monsters",
+                                   "bosses"
+                               ]
+                  },
+                  {
+                      "id":  "core",
+                      "label":  "CORE",
+                      "tabs":  [
+                                   "monsters",
+                                   "bosses"
+                               ]
+                  },
+                  {
+                      "id":  "judgement_hall",
+                      "label":  "JUDGEMENT HALL",
+                      "tabs":  [
+                                   "bosses"
+                               ]
+                  },
+                  {
+                      "id":  "barrier",
+                      "label":  "BARRIER",
+                      "tabs":  [
+                                   "bosses"
+                               ]
+                  }
+              ],
+    "encounters":  [
+                       {
+                           "id":  "froggit",
+                           "displayName":  "Froggit",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  4,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg2",
+                           "displayName":  "Dummy",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  2,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg3",
+                           "displayName":  "Froggit (tutorial)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  3,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg5",
+                           "displayName":  "Whimsun",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  5,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg6",
+                           "displayName":  "Froggit, Whimsun",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  6,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg7",
+                           "displayName":  "Moldsmal",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  7,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg8",
+                           "displayName":  "Moldsmal x3",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  8,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg9",
+                           "displayName":  "Froggit x2",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  9,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg10",
+                           "displayName":  "Moldsmal x2",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  10,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg11",
+                           "displayName":  "Moldsmal, Migosp",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  11,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg12",
+                           "displayName":  "Migosp, Vegetoid",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  12,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg13",
+                           "displayName":  "Loox",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  13,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg14",
+                           "displayName":  "Loox, Vegetoid",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  14,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg15",
+                           "displayName":  "Loox, Vegetoid, Migosp",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  15,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg16",
+                           "displayName":  "Vegetoid x2",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  16,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg17",
+                           "displayName":  "Loox x2",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  17,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg18",
+                           "displayName":  "Vegetoid",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  18,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg120",
+                           "displayName":  "Final Froggit, Astigmatism (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  120,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg121",
+                           "displayName":  "Final Froggit, Migospel (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  121,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg122",
+                           "displayName":  "Parsnik (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  122,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg123",
+                           "displayName":  "Moldessa x2 (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  123,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg124",
+                           "displayName":  "Moldessa x3 (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  124,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg125",
+                           "displayName":  "Final Froggit, Whimsalot (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  125,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg126",
+                           "displayName":  "Final Froggit (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  126,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg127",
+                           "displayName":  "Whimsalot, Parsnik (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  127,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg128",
+                           "displayName":  "Moldessa, Migospel (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  128,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg129",
+                           "displayName":  "Parsnik, Migospel (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  129,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg130",
+                           "displayName":  "Parsnik x2 (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  130,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg131",
+                           "displayName":  "Parsnik, Astigmatism (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  131,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg132",
+                           "displayName":  "Astigmatism x2 (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  132,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg133",
+                           "displayName":  "Astigmatism, Migospel, Moldessa (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  133,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg134",
+                           "displayName":  "Astigmatism, Parsnik, Moldessa (Hard Mode)",
+                           "classification":  "enemy",
+                           "area":  "ruins",
+                           "battlegroup":  134,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg20",
+                           "displayName":  "Napstablook",
+                           "classification":  "miniboss",
+                           "area":  "ruins",
+                           "battlegroup":  20,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "toriel",
+                           "displayName":  "Toriel",
+                           "classification":  "boss",
+                           "area":  "ruins",
+                           "battlegroup":  22,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg28",
+                           "displayName":  "Gyftrot",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  28,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg30",
+                           "displayName":  "Snowdrake",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  30,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg31",
+                           "displayName":  "Snowdrake x2",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  31,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg32",
+                           "displayName":  "Ice Cap",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  32,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg33",
+                           "displayName":  "Ice Cap, Snowdrake",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  33,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg34",
+                           "displayName":  "Jerry",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  34,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg35",
+                           "displayName":  "Ice Cap, Jerry",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  35,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg36",
+                           "displayName":  "Ice Cap, Jerry, Snowdrake",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  36,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg135",
+                           "displayName":  "Glyde",
+                           "classification":  "enemy",
+                           "area":  "snowdin",
+                           "battlegroup":  135,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg23",
+                           "displayName":  "Doggo",
+                           "classification":  "miniboss",
+                           "area":  "snowdin",
+                           "battlegroup":  23,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg24",
+                           "displayName":  "Lesser Dog",
+                           "classification":  "miniboss",
+                           "area":  "snowdin",
+                           "battlegroup":  24,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg25",
+                           "displayName":  "Dogamy, Dogaressa",
+                           "classification":  "miniboss",
+                           "area":  "snowdin",
+                           "battlegroup":  25,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg26",
+                           "displayName":  "Greater Dog",
+                           "classification":  "miniboss",
+                           "area":  "snowdin",
+                           "battlegroup":  26,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg27",
+                           "displayName":  "Papyrus",
+                           "classification":  "boss",
+                           "area":  "snowdin",
+                           "battlegroup":  27,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg40",
+                           "displayName":  "Aaron",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  40,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg41",
+                           "displayName":  "Temmie",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  41,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg42",
+                           "displayName":  "Moldsmal, Moldbygg",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  42,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg43",
+                           "displayName":  "Woshua",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  43,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg46",
+                           "displayName":  "Aaron, Woshua",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  46,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg53",
+                           "displayName":  "Moldsmal x2",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  53,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg54",
+                           "displayName":  "Woshua, Aaron",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  54,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg55",
+                           "displayName":  "Woshua, Moldbygg",
+                           "classification":  "enemy",
+                           "area":  "waterfall",
+                           "battlegroup":  55,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg44",
+                           "displayName":  "Shyren",
+                           "classification":  "miniboss",
+                           "area":  "waterfall",
+                           "battlegroup":  44,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg45",
+                           "displayName":  "Mad Dummy",
+                           "classification":  "boss",
+                           "area":  "waterfall",
+                           "battlegroup":  45,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg93",
+                           "displayName":  "Glad Dummy",
+                           "classification":  "boss",
+                           "area":  "waterfall",
+                           "battlegroup":  93,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg91",
+                           "displayName":  "Monster Kid",
+                           "classification":  "boss",
+                           "area":  "waterfall",
+                           "battlegroup":  91,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg47",
+                           "displayName":  "Undyne",
+                           "classification":  "boss",
+                           "area":  "waterfall",
+                           "battlegroup":  47,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg58",
+                           "displayName":  "Undyne (second battle object)",
+                           "classification":  "boss",
+                           "area":  "waterfall",
+                           "battlegroup":  58,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "needs-adapter",
+                           "enabled":  false,
+                           "sweepOutcome":  "escaped to room_water_undyneyard"
+                       },
+                       {
+                           "id":  "bg92",
+                           "displayName":  "Undyne the Undying",
+                           "classification":  "boss",
+                           "area":  "waterfall",
+                           "battlegroup":  92,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg50",
+                           "displayName":  "Tsunderplane",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  50,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg51",
+                           "displayName":  "Vulkin",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  51,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg52",
+                           "displayName":  "Pyrope",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  52,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg77",
+                           "displayName":  "Tsunderplane, Vulkin",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  77,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg78",
+                           "displayName":  "Pyrope x2",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  78,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg79",
+                           "displayName":  "Vulkin x2",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  79,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg82",
+                           "displayName":  "Lemon Bread (True Lab)",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  82,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg83",
+                           "displayName":  "Reaper Bird (True Lab)",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  83,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg84",
+                           "displayName":  "Snowdrake\u0027s Mother (True Lab)",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  84,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg85",
+                           "displayName":  "Memoryheads (True Lab)",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  85,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg86",
+                           "displayName":  "Endogeny (True Lab)",
+                           "classification":  "enemy",
+                           "area":  "hotland",
+                           "battlegroup":  86,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg49",
+                           "displayName":  "RG 01, RG 02",
+                           "classification":  "miniboss",
+                           "area":  "hotland",
+                           "battlegroup":  49,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg76",
+                           "displayName":  "RG 04, RG 03 (second pair)",
+                           "classification":  "miniboss",
+                           "area":  "hotland",
+                           "battlegroup":  76,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg56",
+                           "displayName":  "Muffet",
+                           "classification":  "boss",
+                           "area":  "hotland",
+                           "battlegroup":  56,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg140",
+                           "displayName":  "So Sorry",
+                           "classification":  "miniboss",
+                           "area":  "hotland",
+                           "battlegroup":  140,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg48",
+                           "displayName":  "Mettaton (quiz show)",
+                           "classification":  "boss",
+                           "area":  "hotland",
+                           "battlegroup":  48,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg57",
+                           "displayName":  "Mettaton (second battle)",
+                           "classification":  "boss",
+                           "area":  "hotland",
+                           "battlegroup":  57,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg80",
+                           "displayName":  "Mettaton (third battle)",
+                           "classification":  "boss",
+                           "area":  "hotland",
+                           "battlegroup":  80,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg59",
+                           "displayName":  "Madjick",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  59,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg60",
+                           "displayName":  "Knight Knight",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  60,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg61",
+                           "displayName":  "Final Froggit",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  61,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg62",
+                           "displayName":  "Astigmatism",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  62,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg63",
+                           "displayName":  "Whimsalot",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  63,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg64",
+                           "displayName":  "Whimsalot, Final Froggit",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  64,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg65",
+                           "displayName":  "Whimsalot, Astigmatism",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  65,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg66",
+                           "displayName":  "Final Froggit, Astigmatism",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  66,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg67",
+                           "displayName":  "Final Froggit, Astigmatism, Whimsalot",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  67,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg68",
+                           "displayName":  "Knight Knight, Madjick",
+                           "classification":  "enemy",
+                           "area":  "core",
+                           "battlegroup":  68,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg81",
+                           "displayName":  "Mettaton EX",
+                           "classification":  "boss",
+                           "area":  "core",
+                           "battlegroup":  81,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg94",
+                           "displayName":  "Mettaton NEO",
+                           "classification":  "boss",
+                           "area":  "core",
+                           "battlegroup":  94,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "victory"
+                       },
+                       {
+                           "id":  "bg95",
+                           "displayName":  "Sans",
+                           "classification":  "boss",
+                           "area":  "judgement_hall",
+                           "battlegroup":  95,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg100",
+                           "displayName":  "Asgore (intro sequence)",
+                           "classification":  "boss",
+                           "area":  "barrier",
+                           "battlegroup":  100,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg101",
+                           "displayName":  "Asgore",
+                           "classification":  "boss",
+                           "area":  "barrier",
+                           "battlegroup":  101,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "defeat"
+                       },
+                       {
+                           "id":  "bg255",
+                           "displayName":  "Asriel Dreemurr",
+                           "classification":  "boss",
+                           "area":  "barrier",
+                           "battlegroup":  255,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       },
+                       {
+                           "id":  "bg256",
+                           "displayName":  "Asriel (final form)",
+                           "classification":  "boss",
+                           "area":  "barrier",
+                           "battlegroup":  256,
+                           "adapter":  "generic_battlegroup",
+                           "status":  "starts",
+                           "enabled":  true,
+                           "sweepOutcome":  "timeout"
+                       }
+                   ]
 }

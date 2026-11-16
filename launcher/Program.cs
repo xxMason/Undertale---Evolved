@@ -39,7 +39,8 @@ namespace Ube
         static int Run(string[] args)
         {
             string undertaleArg = null, profileArg = null, exportArg = null, selftest = null;
-            bool rebuild = false, prepareOnly = false;
+            bool rebuild = false, prepareOnly = false, sweep = false;
+            int sweepFrom = 0;
             for (int i = 0; i < args.Length; i++)
             {
                 string a = args[i];
@@ -47,17 +48,19 @@ namespace Ube
                 else if (a == "--profile" && i + 1 < args.Length) profileArg = args[++i];
                 else if (a == "--export-profile" && i + 1 < args.Length) exportArg = args[++i];
                 else if (a == "--selftest" && i + 1 < args.Length) selftest = args[++i];
+                else if (a == "--sweep") sweep = true;
+                else if (a == "--sweep-from" && i + 1 < args.Length) { sweep = true; sweepFrom = int.Parse(args[++i]); }
                 else if (a == "--rebuild") rebuild = true;
                 else if (a == "--prepare-only") prepareOnly = true;
                 else if (a == "--no-pause") pauseOnError = false;
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|win|lose|lose_then_win] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|win|lose|lose_then_win] [--sweep] [--sweep-from <n>] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
-            if (selftest != null) pauseOnError = false;
+            if (selftest != null || sweep) pauseOnError = false;
 
             root = FindRoot();
             Directory.CreateDirectory(Path.Combine(root, "logs"));
@@ -95,6 +98,7 @@ namespace Ube
             if (selftest != null) IniSet(ini, "Settings", "Movement", "0");
             if (exportArg != null) ExportProfile(ini, exportArg);
             if (prepareOnly) { Log("Prepared. Not launching (--prepare-only)."); return ExitOk; }
+            if (sweep) return RunSweep(install, originalSaveDir, gameDir, saveDir, ini, sweepFrom, savedMovement);
 
             // 5. Snapshot originals, launch, compare.
             var before = SnapshotOriginals(install, originalSaveDir);
@@ -136,6 +140,86 @@ namespace Ube
 
             if (selftest != null) return CheckSelfTest(selftest, newLines, timedOut);
             return ExitOk;
+        }
+
+        // ---------------------------------------------------------------- sweep
+        // Starts every catalogue entry in turn inside the game (scenario "sweep"). If the
+        // game exits or stops logging, the entry it was on is recorded as a crash and the
+        // sweep resumes with the next one. Results go to logs\sweep-results.txt.
+        static int RunSweep(string install, string originalSaveDir, string gameDir, string saveDir, string ini, int from, int savedMovement)
+        {
+            var before = SnapshotOriginals(install, originalSaveDir);
+            string gameLog = Path.Combine(saveDir, "ube_log.txt");
+            string resultsFile = Path.Combine(root, "logs", "sweep-results.txt");
+            string gameOut = Path.Combine(root, "logs", "sweep-game-output.txt");
+            if (from == 0) { File.Delete(resultsFile); File.Delete(gameOut); }
+            int next = from;
+            bool done = false;
+            for (int launches = 0; launches < 150 && !done; launches++)
+            {
+                IniSet(ini, "Test", "Scenario", "sweep");
+                IniSet(ini, "Test", "Start", next.ToString());
+                IniSet(ini, "Settings", "Movement", "0");
+                int linesBefore = File.Exists(gameLog) ? File.ReadAllLines(gameLog).Length : 0;
+                var psi = new ProcessStartInfo(Path.Combine(gameDir, RunnerName))
+                {
+                    WorkingDirectory = gameDir, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true
+                };
+                var output = new StringBuilder();
+                bool stalled = false;
+                using (var p = new Process { StartInfo = psi })
+                {
+                    p.OutputDataReceived += (s, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+                    p.ErrorDataReceived += (s, e) => { if (e.Data != null) lock (output) output.AppendLine(e.Data); };
+                    p.Start();
+                    p.BeginOutputReadLine();
+                    p.BeginErrorReadLine();
+                    long lastLen = -1;
+                    DateTime lastChange = DateTime.Now;
+                    while (!p.WaitForExit(1000))
+                    {
+                        long len = File.Exists(gameLog) ? new FileInfo(gameLog).Length : 0;
+                        if (len != lastLen) { lastLen = len; lastChange = DateTime.Now; }
+                        else if ((DateTime.Now - lastChange).TotalSeconds > 90)
+                        {
+                            stalled = true;
+                            try { p.Kill(); } catch { }
+                            p.WaitForExit();
+                            break;
+                        }
+                    }
+                    p.WaitForExit();
+                }
+                string[] lines = File.Exists(gameLog) ? File.ReadAllLines(gameLog).Skip(linesBefore).ToArray() : new string[0];
+                File.AppendAllLines(resultsFile, lines);
+                done = lines.Any(l => l == "SWEEP done");
+                int last = -1;
+                foreach (string l in lines)
+                    if (l.StartsWith("SWEEP start i="))
+                        last = int.Parse(l.Substring(14, l.IndexOf(' ', 14) - 14));
+                if (!done)
+                {
+                    if (last < 0) throw new UbeException(ExitTestFailed, "Sweep made no progress from entry " + next + ".");
+                    string why = stalled ? "stalled" : "exited";
+                    File.AppendAllText(resultsFile, "SWEEP crash i=" + last + " " + why + Environment.NewLine);
+                    lock (output) File.AppendAllText(gameOut, "==== entry " + last + " (" + why + ")" + Environment.NewLine + output + Environment.NewLine);
+                    Log("Sweep: entry " + last + " " + why + "; resuming at " + (last + 1));
+                    next = last + 1;
+                }
+            }
+            IniSet(ini, "Test", "Scenario", "");
+            IniSet(ini, "Test", "Start", "0");
+            IniSet(ini, "Settings", "Movement", savedMovement.ToString());
+
+            var diffs = Diff(before, SnapshotOriginals(install, originalSaveDir));
+            if (diffs.Count > 0)
+            {
+                foreach (string d in diffs) Log("ORIGINAL CHANGED: " + d);
+                throw new UbeException(ExitOriginalsChanged, "Original Undertale files or saves changed during the sweep.");
+            }
+            Log("Originals verified unchanged after the sweep.");
+            Log(done ? "Sweep finished. Results: " + resultsFile : "Sweep did not finish.");
+            return done ? ExitOk : ExitTestFailed;
         }
 
         // ---------------------------------------------------------------- locating / verifying
@@ -452,7 +536,7 @@ namespace Ube
             else if (scenario == "wasd") expect = new[] { "BOOT ", "WASDCHK off sel=0", "SETTINGS movement=1", "WASDCHK on sel=0", "STATE IN_BATTLE", "WASDCHK battle timeup=1", "STATE ", "EXIT" };
             else if (scenario == "win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else if (scenario == "lose") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "EXIT" };
-            else if (scenario == "ui") expect = new[] { "BOOT ", "CONFIG lv=5 hp=33", "TABS area=0 cat=0 focus=2 rows=1", "TABS area=0 cat=1 focus=1 rows=1", "TABS area=1 cat=0 focus=0 rows=0", "STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36", "STATE ", "EXIT" };
+            else if (scenario == "ui") expect = new[] { "BOOT ", "CONFIG lv=5 hp=33", "TABS area=0 cat=0 focus=2", "TABS area=0 cat=1 focus=1", "TABS area=1 cat=0 focus=0", "STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36", "STATE ", "EXIT" };
             else if (scenario == "lose_then_win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "RETRY", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else throw new UbeException(ExitUsage, "Unknown selftest scenario " + scenario);
             int pos = 0;

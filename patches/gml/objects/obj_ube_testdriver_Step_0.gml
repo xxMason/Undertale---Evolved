@@ -208,8 +208,59 @@ if (global.ube_test == "keys" && room == room_ube_menu)
         }
     }
 }
+// Scenario "sweep": run fast, record the real monster names, and abort anything that
+// overruns or leaves the battle for a story room.
+if (global.ube_test == "sweep")
+{
+    var abort = 0;
+    if (room == room_battle || room == room_gameover)
+    {
+        room_speed = 150;
+        esc = 0;
+        if (room == room_battle && t == 45)
+        {
+            var s = "";
+            var m;
+            for (m = 0; m < 3; m += 1)
+            {
+                if (global.monster[m] == 1)
+                {
+                    s += global.monstername[m] + ";";
+                }
+            }
+            ube_log("SWEEP names i=" + string(global.ube_sweep_i) + " |" + s);
+        }
+        if (t > 2700)
+        {
+            ube_log("SWEEP timeout i=" + string(global.ube_sweep_i));
+            abort = 1;
+        }
+    }
+    else if (room != room_ube_menu)
+    {
+        esc += 1;
+        if (esc > 10)
+        {
+            ube_log("SWEEP escaped i=" + string(global.ube_sweep_i) + " room=" + room_get_name(room));
+            abort = 1;
+        }
+    }
+    if (abort == 1)
+    {
+        esc = 0;
+        t = 0;
+        keyboard_key_release(ord("Z"));
+        global.ube_result = 3;
+        caster_free(all);
+        with (obj_gameover)
+        {
+            instance_destroy();
+        }
+        room_goto(room_ube_menu);
+    }
+}
 total += 1;
-if (total > 5400)
+if (total > 5400 && global.ube_test != "sweep")
 {
     screen_save("ube_shot_timeout.png");
     ube_log("TEST TIMEOUT room=" + string(room));

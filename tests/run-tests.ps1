@@ -28,11 +28,20 @@ $before = Get-Snapshot $watched
 $results = @()
 $profile = Join-Path $root 'profiles\default.json'
 
-foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'gear', 'win', 'lose', 'lose_then_win') {
-    $out = & $exe --profile $profile --selftest $scenario 2>&1
-    $code = $LASTEXITCODE
+foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'gear', 'train', 'win', 'lose', 'lose_then_win') {
+    # The scenarios drive the game with simulated key presses, which the runner drops if
+    # its window loses focus (for example when someone uses the PC during the run). A
+    # failed scenario is retried once, and the report says so when that happens.
+    $note = ''
+    foreach ($attempt in 1, 2) {
+        $out = & $exe --profile $profile --selftest $scenario 2>&1
+        $code = $LASTEXITCODE
+        if ($code -eq 0) { break }
+        $note = '[first attempt failed; ' + $(if ($attempt -eq 1) { 'passed on retry' } else { 'retry failed too' }) + '] '
+    }
+    if ($code -ne 0) { $note = '[failed twice] ' }
     $game = ($out | Where-Object { $_ -match '^\s+game> ' } | ForEach-Object { ($_ -replace '^\s+game> ', '') }) -join ' | '
-    $results += [pscustomobject]@{ Test = "selftest $scenario"; Pass = ($code -eq 0); Detail = $game }
+    $results += [pscustomobject]@{ Test = "selftest $scenario"; Pass = ($code -eq 0); Detail = $note + $game }
 }
 
 # Negative tests: the launcher must refuse rather than guess.

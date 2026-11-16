@@ -13,3 +13,5 @@ held[0] = 0;
 held[1] = 0;
 held[2] = 0;
 held[3] = 0;
+guard_t = 0;
+battle_t = 0;

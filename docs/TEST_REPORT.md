@@ -24,6 +24,8 @@ same independently (hash, size and modified time) around the whole run.
 | Simulated arrow keys reach `keyboard_check_direct` | `KEYS check=1 direct=1 timeup=1` |
 | Weapon, armour and inventory reach the original battle (Real Knife, The Locket, items in slots 2 and 3) | `GEAR weapon=52 wstr=99 armor=53 adef=99 item0=11 item1=1 item2=0`: stats set by the game's own equip scripts, inventory packed from slot 0 |
 | A configured item works through the real ITEM menu | `GEAR used hp=20/20 item0=1`: Butterscotch Pie healed 5 to 20 HP and left the inventory |
+| Training Mode: game speed, retry key, infinite HP and hit counting in a real fight at 1 HP | `TRAIN speed=60 trainer=1`, `TRAIN retry`, `STATE VICTORY ... hp=1/20`, `TRAIN hits=7 dmg=7 lethal=7`, `TRAIN survived_lethal_hit`; screenshots show the status line and hitbox outlines |
+| Authentic Mode has no trainer object | every other self-test logs `training=0`, and the trainer is only created when Training Mode is on |
 | LOVE and starting HP reach the original battle | battle screenshot shows `LV 1`, `HP 01 / 20`; LV 20 run shows 99/99 |
 | Winning returns to the results screen | `STATE VICTORY kills=1 xp=3 gold=2 hp=29/36` (EXP and gold from original code) |
 | Losing plays the original game over and returns | `STATE DEFEAT hp=0` |
@@ -39,34 +41,55 @@ same independently (hash, size and modified time) around the whole run.
 
 `UltimateBattleEngine.exe --sweep` starts every catalogue entry at LV 20, speeds the game
 up, presses confirm repeatedly (which attacks every turn) and records what happens.
-`scripts\apply-sweep.ps1` writes the result into `config\encounters.json`. The game did
-not crash or exit on any entry, and the originals were unchanged afterwards.
+`--sweep-unverified` then replays only the entries that did not reach an ending, this
+time with the Real Knife, The Locket and Training Mode's infinite HP, and a longer time
+limit, so bosses can be fought to their endings. `scripts\apply-sweep.ps1` writes the
+results into `config\encounters.json`. The game did not crash or exit on any entry, and
+the originals were unchanged afterwards.
 
 | Result | Count | Meaning | In the menu |
 |---|---|---|---|
-| verified | 69 | Fought to a victory and returned to the results screen | enabled |
-| starts | 28 | The battle starts and runs, but ended in a defeat or was still going at the time limit, so its ending is unknown | enabled, marked `*` |
-| needs-adapter | 1 | Left the battle for a story room (`bg58`, Undyne's second battle object) | disabled |
+| verified | 87 | Fought to its ending and returned to the results screen | enabled |
+| starts | 11 | The battle starts and runs, but attacking alone never ended it within the time limit | enabled, marked `*` |
 
-The 28 "starts" entries are mostly bosses that cannot be beaten by attacking alone or in
-the time limit: Toriel, Papyrus, Mad Dummy, Monster Kid, Undyne, Undyne the Undying,
-Muffet, So Sorry, the three Mettaton battles, Mettaton EX, Sans, both Asgore entries,
-both Asriel entries, RG 01 and RG 02, the five True Lab amalgamates, Glyde, and four
-ordinary groups where the idle player died. For these, what happens when the fight
-really ends (cutscenes, room changes, a game-over that expects a save) is **not known**.
+Two of the 87 end through the story guard rather than the normal return path: Asgore
+(the game moves to `room_emptywhite` after the fight) and `bg58`, Undyne's second battle
+object (`room_water_undyneyard`). The guard returned both to the results screen.
+
+Still unverified (`*`): the five True Lab amalgamates (they cannot be killed, only
+spared), Mettaton's second and third battles, Sans, the Asgore intro sequence, and both
+Asriel entries. What happens when these really end is **not known**; the story guard
+would catch a jump into a story room, but not a fight that quits or restarts the game.
 
 Limits of the sweep:
 
-- It proves a fight starts, runs on original code and, for "verified", returns cleanly
-  after a kill. It does not check that attacks, dialogue or ACT options behave exactly
-  as in the story, and it never spares or flees.
-- Every fight starts from a new-game state. Fights that change with story flags or kill
-  counts (for example genocide variants) run in whatever form that state gives.
+- It proves a fight starts, runs on original code and returns cleanly after being won by
+  attacking. It does not check that attacks, dialogue or ACT options behave exactly as in
+  the story, and it never spares or flees.
+- 18 of the 87 were verified only in the powered run (Real Knife, infinite HP).
 - Display names come from the names the game itself reported, with five corrected by
   hand where the game reports a placeholder.
 - Not in the catalogue: battlegroups 1, 19, 21, 69-75, 87-90 and Photoshop Flowey
   (reasons in `config/encounters.json`).
 
+## Story safeguards
+
+| Safeguard | Evidence |
+|---|---|
+| Story memory (`undertale.ini`, `file0`-`file9`, `system_information_962/963`) in the simulator's folder is deleted before every launch and every fight | launcher logged `Cleared simulator story memory: undertale.ini`; the death counter written by a lost fight was gone before the retry |
+| A fight that leaves for a story room is returned to the results screen | `GUARD left battle for room_emptywhite after 8320 frames` (Asgore), `STATE STORY_EXIT` |
+| None of this touches the original game | originals compared unchanged after both sweeps and every test run |
+
+Consequences to be aware of:
+
+- Every fight is a first encounter on a new timeline. Dialogue and behaviour that depend
+  on earlier story (deaths so far, kills, who was spared, Flowey's and Sans's memory,
+  genocide variants) always appear in their new-game form.
+- Fights never grant lasting progress: EXP, gold, kills and items exist for that fight only.
+- Not covered: code that calls `game_end()` or `game_restart()` (the Flowey and
+  world-ending sequences do). None of the 87 verified fights did this; the 11 unverified
+  ones are unknown. The world-destroying sequence also tries to delete `UNDERTALE.exe`
+  by name; the simulator's runner has a different name and lives in its own folder.
 ## Verified by inspection only
 
 - The isolation gate's refusal paths (overlapping folders, Steam files present, wrong
@@ -87,6 +110,15 @@ Limits of the sweep:
   Butterscotch Pie and Monster Candy were exercised. Weapon and armour choices in the
   menu were not driven by a test, and equipping gear from the inventory mid-battle was
   not tried.
+- **Training Mode beyond Froggit.** Tested in one fight at 200% speed. Other speeds,
+  slow-motion, retry from the game-over screen, and bosses were not tried. Fights whose
+  damage does not go through `global.hp` and `obj_battlecontroller` (if any) would not be
+  covered by infinite HP.
+- **Hitboxes are bounding boxes** of the 69 object types that have a collision event with
+  the SOUL, not pixel-precise masks, and attacks that hurt without such an event are not
+  outlined.
+- **HP lost** counts HP actually removed, so a hit that would have done more than your
+  remaining HP is under-counted.
 - **WASD with a real keyboard.** The tests press W/A/S/D through simulated keys. The
   helper may add up to one frame of input delay in WASD mode; this was not measured.
 - **Mouse support** in the menus, including clicking tabs.
@@ -104,8 +136,10 @@ Limits of the sweep:
 ## Incomplete in milestone 1
 
 - HP override above the normal maximum.
-- 97 of 98 catalogue entries are enabled, but 28 of them have unverified endings (see
+- All 98 catalogue entries are enabled, but 11 of them have unverified endings (see
   the sweep section).
-- Training Mode, Custom Battles, Statistics and Settings are shown greyed out.
+- Custom Battles and Statistics are shown greyed out.
+- Training Mode has infinite HP, game speed, retry key, hitboxes and hit counting. Attack
+  and phase selection, checkpoints, saved statistics and training presets are not built.
 - The ERROR state exists but nothing raises it.
 - Scrolling of long fight lists was only seen at the top position in screenshots.

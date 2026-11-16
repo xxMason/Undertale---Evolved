@@ -18,6 +18,52 @@ if (room == room_battle || room == room_gameover)
         shot = 1;
         screen_save("ube_shot_battle.png");
     }
+    if ((global.ube_test == "train" || global.ube_test == "gear") && room == room_battle)
+    {
+        // The runner ignores simulated keys for a few seconds after start-up, and how
+        // long varies. Probe with an unused key (Q); rt counts frames since keys work.
+        if (kready == 0)
+        {
+            kp += 1;
+            if ((kp mod 10) == 1)
+            {
+                keyboard_key_press(81);
+            }
+            if ((kp mod 10) == 4)
+            {
+                if (keyboard_check(81))
+                {
+                    kready = 1;
+                }
+                keyboard_key_release(81);
+            }
+        }
+        else
+        {
+            rt += 1;
+        }
+    }
+    if (global.ube_test == "train" && room == room_battle)
+    {
+        if (t == 20)
+        {
+            ube_log("TRAIN speed=" + string(room_speed) + " trainer=" + string(instance_exists(obj_ube_trainer)));
+        }
+        if (t == 200 || t == 280)
+        {
+            screen_save("ube_shot_train" + string(t) + ".png");
+        }
+        // Press R once, after simulated keys are known to work.
+        if (rt == 60 && train_r == 0)
+        {
+            keyboard_key_press(82);
+        }
+        if (rt == 64 && train_r == 0)
+        {
+            keyboard_key_release(82);
+            train_r = 1;
+        }
+    }
     if (global.ube_test == "gear" && room == room_battle)
     {
         // Report what the original battle code ended up with, then use the first item
@@ -26,15 +72,28 @@ if (room == room_battle || room == room_gameover)
         {
             ube_log("GEAR weapon=" + string(global.weapon) + " wstr=" + string(global.wstrength) + " armor=" + string(global.armor) + " adef=" + string(global.adef) + " item0=" + string(global.item[0]) + " item1=" + string(global.item[1]) + " item2=" + string(global.item[2]) + " hp=" + string(global.hp));
         }
-        if (t == 180 || t == 195)
+        // Closed loop: keep tapping Right until the ITEM button (index 2) is selected,
+        // then let the confirm presses below open the menu and use the first item.
+        if (kready == 1 && gear_go == 0)
         {
-            keyboard_key_press(vk_right);
+            if (global.bmenuno == 0 && global.bmenucoord[0] == 2)
+            {
+                keyboard_key_release(vk_right);
+                gear_go = 1;
+            }
+            else
+            {
+                if ((rt mod 12) == 1)
+                {
+                    keyboard_key_press(vk_right);
+                }
+                if ((rt mod 12) == 5)
+                {
+                    keyboard_key_release(vk_right);
+                }
+            }
         }
-        if (t == 184 || t == 199)
-        {
-            keyboard_key_release(vk_right);
-        }
-        if (t > 220 && gear_done == 0 && global.item[0] != 11)
+        if (gear_go == 1 && gear_done == 0 && global.item[0] != 11)
         {
             gear_done = 1;
             ube_log("GEAR used hp=" + string(global.hp) + "/" + string(global.maxhp) + " item0=" + string(global.item[0]));
@@ -51,7 +110,7 @@ if (room == room_battle || room == room_gameover)
             room_goto(room_ube_menu);
         }
     }
-    if ((t mod 8) == 0 && (global.ube_test != "gear" || t >= 220))
+    if ((t mod 8) == 0 && (global.ube_test != "gear" || gear_go == 1))
     {
         keyboard_key_press(ord("Z"));
     }
@@ -263,7 +322,7 @@ if (global.ube_test == "sweep")
             }
             ube_log("SWEEP names i=" + string(global.ube_sweep_i) + " |" + s);
         }
-        if (t > 2700)
+        if (t > 2700 + (global.ube_sweep_power * 6300))
         {
             ube_log("SWEEP timeout i=" + string(global.ube_sweep_i));
             abort = 1;

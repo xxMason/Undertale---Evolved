@@ -4,9 +4,10 @@ A battle simulator that runs the **original** Undertale combat code from your ow
 the game, behind a custom fight-select menu. It works on a private copy of the game and
 keeps its saves in a separate folder.
 
-Current state: 98 encounters in the catalogue, 69 verified end to end by an automated
-sweep and 28 more that start and run with unverified endings (marked `*` in the menu).
-LOVE and starting HP are configurable. See `docs/TEST_REPORT.md`.
+Current state: 98 encounters in the catalogue, 87 verified to their endings by automated
+sweeps and 11 more that start and run with unverified endings (marked `*` in the menu).
+Player Setup covers LOVE, HP, weapon, armour and inventory; Training Mode adds infinite HP,
+game speed, a retry key and hitbox outlines. See `docs/TEST_REPORT.md`.
 
 ## Requirements
 

@@ -57,6 +57,24 @@ var controller = NewObject("obj_ube_controller", false);
 controller.Depth = -1000;
 var testdriver = NewObject("obj_ube_testdriver", true);
 var inputHelper = NewObject("obj_ube_input", true);
+var trainer = NewObject("obj_ube_trainer", true);
+trainer.Depth = -9999;
+var scrHitboxes = NewScript("ube_draw_hitboxes");
+
+// Hitbox list for Training Mode: every object that has a collision event with obj_heart
+// (children are covered by GML's "with"). Generated here so nothing is assumed.
+var heartObj = Data.GameObjects.ByName("obj_heart");
+uint heartIndex = (uint)Data.GameObjects.IndexOf(heartObj);
+var hitboxGml = new StringBuilder();
+int hitboxCount = 0;
+foreach (var o in Data.GameObjects)
+{
+    if (o == heartObj || o.Name.Content.StartsWith("obj_ube_")) continue;
+    if (!o.Events[(int)EventType.Collision].Any(ev => ev.EventSubtype == heartIndex)) continue;
+    hitboxGml.AppendLine("with (" + o.Name.Content + ") { if (sprite_index >= 0 || mask_index >= 0) { draw_rectangle(bbox_left, bbox_top, bbox_right, bbox_bottom, true); } }");
+    hitboxCount++;
+}
+if (hitboxCount == 0) throw new Exception("No objects collide with obj_heart; hitbox list would be empty");
 
 var menuRoom = new UndertaleRoom()
 {
@@ -165,6 +183,12 @@ importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Step, (uint)0, Dat
 
 importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_input_Create_0.gml"));
 importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Step, (uint)1, Data), Gml("objects/obj_ube_input_Step_1.gml"));
+
+importGroup.QueueReplace(scrHitboxes, hitboxGml.ToString());
+importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_trainer_Create_0.gml"));
+importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Other, (uint)4, Data), Gml("objects/obj_ube_trainer_Other_4.gml"));
+importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Step, (uint)2, Data), Gml("objects/obj_ube_trainer_Step_2.gml"));
+importGroup.QueueReplace(trainer.EventHandlerFor(EventType.Draw, (uint)0, Data), Gml("objects/obj_ube_trainer_Draw_0.gml"));
 
 // The ONLY change to original game code: after the original game-over sequence returns to
 // global.currentroom, the game would reload the last save (scr_tempload -> file9), which

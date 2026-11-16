@@ -39,7 +39,7 @@ namespace Ube
         static int Run(string[] args)
         {
             string undertaleArg = null, profileArg = null, exportArg = null, selftest = null;
-            bool rebuild = false, prepareOnly = false, sweep = false;
+            bool rebuild = false, prepareOnly = false, sweep = false, sweepPower = false;
             int sweepFrom = 0;
             for (int i = 0; i < args.Length; i++)
             {
@@ -49,6 +49,7 @@ namespace Ube
                 else if (a == "--export-profile" && i + 1 < args.Length) exportArg = args[++i];
                 else if (a == "--selftest" && i + 1 < args.Length) selftest = args[++i];
                 else if (a == "--sweep") sweep = true;
+                else if (a == "--sweep-unverified") { sweep = true; sweepPower = true; }
                 else if (a == "--sweep-from" && i + 1 < args.Length) { sweep = true; sweepFrom = int.Parse(args[++i]); }
                 else if (a == "--rebuild") rebuild = true;
                 else if (a == "--prepare-only") prepareOnly = true;
@@ -56,7 +57,7 @@ namespace Ube
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|win|lose|lose_then_win] [--sweep] [--sweep-from <n>] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|win|lose|lose_then_win] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
@@ -91,14 +92,27 @@ namespace Ube
             // 4. Configuration in the isolated save directory.
             Directory.CreateDirectory(saveDir);
             string ini = Path.Combine(saveDir, "ube_config.ini");
+            ClearStoryMemory(saveDir);
             if (profileArg != null) ApplyProfile(profileArg, ini);
             IniSet(ini, "Test", "Scenario", selftest ?? "");
+            IniSet(ini, "Test", "Power", sweepPower ? "1" : "0");
             // Self-tests always start in arrow-key mode; the user's choice is restored afterwards.
             int savedMovement = (int)IniGetNumber(ini, "Settings", "Movement", 0);
-            if (selftest != null) IniSet(ini, "Settings", "Movement", "0");
+            int savedTraining = (int)IniGetNumber(ini, "Training", "Enabled", 0);
+            if (selftest != null || sweep)
+            {
+                IniSet(ini, "Settings", "Movement", "0");
+                IniSet(ini, "Training", "Enabled", "0");
+            }
             if (exportArg != null) ExportProfile(ini, exportArg);
             if (prepareOnly) { Log("Prepared. Not launching (--prepare-only)."); return ExitOk; }
-            if (sweep) return RunSweep(install, originalSaveDir, gameDir, saveDir, ini, sweepFrom, savedMovement);
+            if (sweep)
+            {
+                int sweepCode = RunSweep(install, originalSaveDir, gameDir, saveDir, ini, sweepFrom, savedMovement);
+                IniSet(ini, "Training", "Enabled", savedTraining.ToString());
+                IniSet(ini, "Test", "Power", "0");
+                return sweepCode;
+            }
 
             // 5. Snapshot originals, launch, compare.
             var before = SnapshotOriginals(install, originalSaveDir);
@@ -121,6 +135,7 @@ namespace Ube
             {
                 IniSet(ini, "Test", "Scenario", "");
                 IniSet(ini, "Settings", "Movement", savedMovement.ToString());
+                IniSet(ini, "Training", "Enabled", savedTraining.ToString());
             }
 
             var after = SnapshotOriginals(install, originalSaveDir);
@@ -142,6 +157,21 @@ namespace Ube
             return ExitOk;
         }
 
+        // The original keeps story memory in these files (deaths, what characters remember,
+        // ending flags). Three of the flags make the game start in a Flowey scene instead
+        // of our menu, and one file sends it to a dead-end room, so the simulator's copy
+        // is cleared before every launch. Only the isolated folder is touched.
+        static void ClearStoryMemory(string saveDir)
+        {
+            var names = new List<string> { "undertale.ini", "system_information_962", "system_information_963" };
+            for (int i = 0; i < 10; i++) names.Add("file" + i);
+            foreach (string n in names)
+            {
+                string f = Path.Combine(saveDir, n);
+                if (File.Exists(f)) { File.Delete(f); Log("Cleared simulator story memory: " + n); }
+            }
+        }
+
         // ---------------------------------------------------------------- sweep
         // Starts every catalogue entry in turn inside the game (scenario "sweep"). If the
         // game exits or stops logging, the entry it was on is recorded as a crash and the
@@ -160,6 +190,7 @@ namespace Ube
                 IniSet(ini, "Test", "Scenario", "sweep");
                 IniSet(ini, "Test", "Start", next.ToString());
                 IniSet(ini, "Settings", "Movement", "0");
+                ClearStoryMemory(saveDir);
                 int linesBefore = File.Exists(gameLog) ? File.ReadAllLines(gameLog).Length : 0;
                 var psi = new ProcessStartInfo(Path.Combine(gameDir, RunnerName))
                 {
@@ -180,7 +211,7 @@ namespace Ube
                     {
                         long len = File.Exists(gameLog) ? new FileInfo(gameLog).Length : 0;
                         if (len != lastLen) { lastLen = len; lastChange = DateTime.Now; }
-                        else if ((DateTime.Now - lastChange).TotalSeconds > 90)
+                        else if ((DateTime.Now - lastChange).TotalSeconds > 240)
                         {
                             stalled = true;
                             try { p.Kill(); } catch { }
@@ -555,6 +586,7 @@ namespace Ube
             string[] expect;
             if (scenario == "menu") expect = new[] { "BOOT ", "EXIT" };
             else if (scenario == "keys") expect = new[] { "BOOT ", "KEYS check=1 direct=1 timeup=1", "EXIT" };
+            else if (scenario == "train") expect = new[] { "BOOT ", "STATE IN_BATTLE id=froggit battlegroup=4 lv=1 hp=1/20 training=1", "TRAIN speed=60 trainer=1", "TRAIN retry", "STATE IN_BATTLE id=froggit", "STATE VICTORY", "TRAIN hits=", "TRAIN survived_lethal_hit", "EXIT" };
             else if (scenario == "gear") expect = new[] { "BOOT ", "STATE IN_BATTLE id=froggit battlegroup=4 lv=1 hp=5/20", "GEAR weapon=52 wstr=99 armor=53 adef=99 item0=11 item1=1 item2=0 hp=5", "GEAR used hp=20/20 item0=1", "STATE ABORTED", "EXIT" };
             else if (scenario == "wasd") expect = new[] { "BOOT ", "WASDCHK off sel=0", "SETTINGS movement=1", "WASDCHK on sel=0", "STATE IN_BATTLE", "WASDCHK battle timeup=1", "STATE ", "EXIT" };
             else if (scenario == "win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };

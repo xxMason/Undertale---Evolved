@@ -11,6 +11,13 @@ if (page == 4)
         {
             res_win = 0;
         }
+        res_story = 0;
+        if (global.ube_result == 4)
+        {
+            // The story guard caught the fight leaving for a story scene.
+            res_story = 1;
+            ube_log("STATE STORY_EXIT");
+        }
         if (global.ube_result == 3)
         {
             // Only the sweep test aborts a battle.
@@ -32,9 +39,20 @@ if (page == 4)
             global.ube_state = 5;
             ube_log("STATE DEFEAT hp=" + string(res_hp));
         }
-        else
+        else if (res_story == 0)
         {
             ube_log("STATE VICTORY kills=" + string(res_kills) + " xp=" + string(res_xp) + " gold=" + string(res_gold) + " hp=" + string(res_hp) + "/" + string(res_maxhp));
+        }
+        res_training = global.ube_training;
+        res_hits = global.ube_t_hits;
+        res_dmg = global.ube_t_dmg;
+        if (res_training == 1)
+        {
+            ube_log("TRAIN hits=" + string(res_hits) + " dmg=" + string(res_dmg) + " lethal=" + string(global.ube_t_lethal));
+            if (global.ube_t_lethal > 0 && res_win == 1)
+            {
+                ube_log("TRAIN survived_lethal_hit");
+            }
         }
         global.ube_state = 6;
         page = 3;
@@ -177,6 +195,20 @@ if (page == 3)
     row_on[0] = 1;
     row_on[1] = 1;
     row_on[2] = 1;
+}
+if (page == 7)
+{
+    // Training Mode: the modifier rows are only selectable while the mode is on.
+    row_x = 96;
+    row_y0 = 112;
+    row_h = 38;
+    row_n = 6;
+    row_on[0] = 1;
+    for (i = 1; i < 5; i += 1)
+    {
+        row_on[i] = global.ube_training;
+    }
+    row_on[5] = 1;
 }
 if (page == 5)
 {
@@ -384,6 +416,22 @@ if (global.ube_test == "sweep")
         {
             global.ube_sweep_i += 1;
         }
+        // Power sweep: only entries not yet verified, with Real Knife, The Locket and
+        // infinite HP, so bosses can actually be fought to their endings.
+        if (global.ube_sweep_power == 1)
+        {
+            while (global.ube_sweep_i < global.ube_enc_count && global.ube_enc_enabled[global.ube_sweep_i] == 1)
+            {
+                global.ube_sweep_i += 1;
+            }
+            global.ube_weapon = 52;
+            global.ube_armor = 53;
+            global.ube_training = 1;
+            global.ube_t_infhp = 1;
+            global.ube_t_speed = 500;
+            global.ube_t_retry = 0;
+            global.ube_t_hitbox = 0;
+        }
         if (global.ube_sweep_i >= global.ube_enc_count)
         {
             ube_log("SWEEP done");
@@ -420,13 +468,25 @@ if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd
                 // Show the ITEMS page with sample contents for a screenshot (not saved).
                 global.ube_item[0] = 11;
                 global.ube_item[2] = 43;
-                page = 6;
+                global.ube_training = 1;
+                page = 7;
                 sel = 2;
                 ptimer = 0;
                 exit;
             }
             global.ube_lv = 20;
             global.ube_hp = 0;
+            if (global.ube_test == "train")
+            {
+                // Training Mode at 1 HP: every hit would be lethal without infinite HP.
+                global.ube_lv = 1;
+                global.ube_hp = 1;
+                global.ube_training = 1;
+                global.ube_t_infhp = 1;
+                global.ube_t_speed = 200;
+                global.ube_t_retry = 1;
+                global.ube_t_hitbox = 1;
+            }
             if (global.ube_test == "gear")
             {
                 // Real Knife, The Locket, Butterscotch Pie in slot 2 (slot 1 left empty
@@ -445,6 +505,20 @@ if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd
                 global.ube_hp = 1;
             }
             ube_start_encounter(0);
+            exit;
+        }
+    }
+    if (page == 7)
+    {
+        if (ptimer == 20)
+        {
+            screen_save("ube_shot_training.png");
+        }
+        if (ptimer == 30)
+        {
+            page = 6;
+            sel = 2;
+            ptimer = 0;
             exit;
         }
     }
@@ -503,6 +577,12 @@ if (page == 0)
         {
             global.ube_state = 1;
             page = 2;
+            sel = 0;
+            ptimer = 0;
+        }
+        else if (sel == 2)
+        {
+            page = 7;
             sel = 0;
             ptimer = 0;
         }
@@ -654,6 +734,61 @@ if (page == 2)
         global.ube_state = 0;
         page = 0;
         sel = 1;
+        ptimer = 0;
+    }
+    exit;
+}
+
+if (page == 7)
+{
+    var td = k_right - k_left;
+    var toggle = (td != 0 || k_ok);
+    if (sel == 0 && toggle)
+    {
+        global.ube_training = 1 - global.ube_training;
+        snd_play(snd_select);
+    }
+    else if (sel == 1 && toggle)
+    {
+        global.ube_t_infhp = 1 - global.ube_t_infhp;
+        snd_play(snd_squeak);
+    }
+    else if (sel == 2 && toggle)
+    {
+        var si;
+        var sp = 2;
+        for (si = 0; si < 6; si += 1)
+        {
+            if (global.ube_t_speedlist[si] == global.ube_t_speed)
+            {
+                sp = si;
+            }
+        }
+        if (td == 0)
+        {
+            td = 1;
+        }
+        sp = ((sp + td) + 6) mod 6;
+        global.ube_t_speed = global.ube_t_speedlist[sp];
+        snd_play(snd_squeak);
+    }
+    else if (sel == 3 && toggle)
+    {
+        global.ube_t_retry = 1 - global.ube_t_retry;
+        snd_play(snd_squeak);
+    }
+    else if (sel == 4 && toggle)
+    {
+        global.ube_t_hitbox = 1 - global.ube_t_hitbox;
+        snd_play(snd_squeak);
+    }
+    else if (k_back || (k_ok && sel == 5))
+    {
+        snd_play(snd_select);
+        ube_save_config();
+        ube_log("TRAINING enabled=" + string(global.ube_training) + " infhp=" + string(global.ube_t_infhp) + " speed=" + string(global.ube_t_speed) + " retry=" + string(global.ube_t_retry) + " hitbox=" + string(global.ube_t_hitbox));
+        page = 0;
+        sel = 2;
         ptimer = 0;
     }
     exit;

@@ -19,6 +19,7 @@ if (!variable_global_exists("ube_boot"))
     global.ube_hp = floor(ini_read_real("Player", "HP", 0));
     global.ube_test = ini_read_string("Test", "Scenario", "");
     global.ube_sweep_i = floor(ini_read_real("Test", "Start", 0));
+    global.ube_sweep_power = floor(ini_read_real("Test", "Power", 0));
     global.ube_wasd = clamp(floor(ini_read_real("Settings", "Movement", 0)), 0, 1);
     // Equipment lists are exactly the item IDs handled by scr_weaponeq / scr_armoreq.
     global.ube_wlist[0] = 3;
@@ -67,6 +68,29 @@ if (!variable_global_exists("ube_boot"))
         global.ube_item[ci] = clamp(floor(ini_read_real("Player", "Item" + string(ci), 0)), 0, global.ube_item_max);
     }
     global.ube_mus_on = 0;
+    // Training Mode (all of it is ignored while Enabled is 0 = Authentic Mode).
+    global.ube_training = clamp(floor(ini_read_real("Training", "Enabled", 0)), 0, 1);
+    global.ube_t_infhp = clamp(floor(ini_read_real("Training", "InfiniteHP", 1)), 0, 1);
+    global.ube_t_retry = clamp(floor(ini_read_real("Training", "Retry", 1)), 0, 1);
+    global.ube_t_hitbox = clamp(floor(ini_read_real("Training", "Hitboxes", 0)), 0, 1);
+    global.ube_t_speedlist[0] = 50;
+    global.ube_t_speedlist[1] = 75;
+    global.ube_t_speedlist[2] = 100;
+    global.ube_t_speedlist[3] = 125;
+    global.ube_t_speedlist[4] = 150;
+    global.ube_t_speedlist[5] = 200;
+    global.ube_t_speed = 100;
+    var cfg_s = floor(ini_read_real("Training", "Speed", 100));
+    for (ci = 0; ci < 6; ci += 1)
+    {
+        if (global.ube_t_speedlist[ci] == cfg_s)
+        {
+            global.ube_t_speed = cfg_s;
+        }
+    }
+    global.ube_t_hits = 0;
+    global.ube_t_dmg = 0;
+    global.ube_t_lethal = 0;
     ini_close();
     instance_create(0, 0, obj_ube_input);
     ube_log("BOOT build=" + global.ube_build + " lv=" + string(global.ube_lv) + " hp=" + string(global.ube_hp) + " test=" + global.ube_test + " steam=" + string(steam_initialised()));
@@ -99,6 +123,10 @@ res_xp = 0;
 res_gold = 0;
 res_hp = 0;
 res_maxhp = 0;
+res_story = 0;
+res_training = 0;
+res_hits = 0;
+res_dmg = 0;
 menu_n = 7;
 menu_txt[0] = "FIGHT SELECT";
 menu_txt[1] = "PLAYER SETUP";
@@ -109,7 +137,7 @@ menu_txt[5] = "SETTINGS";
 menu_txt[6] = "EXIT";
 menu_on[0] = 1;
 menu_on[1] = 1;
-menu_on[2] = 0;
+menu_on[2] = 1;
 menu_on[3] = 0;
 menu_on[4] = 0;
 menu_on[5] = 1;

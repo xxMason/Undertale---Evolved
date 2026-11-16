@@ -17,6 +17,10 @@ foreach ($l in $lines) {
     if ($l -match '^SWEEP names i=\d+ \|(.*)$') { $res[$cur].names = $Matches[1] }
     elseif ($l -match '^SWEEP timeout') { $res[$cur].outcome = 'timeout' }
     elseif ($l -match '^SWEEP escaped i=\d+ room=(\S+)') { $res[$cur].outcome = "escaped to $($Matches[1])" }
+    elseif ($l -match '^GUARD left battle for (\S+) after (\d+) frames') {
+        # Leaving within the first 5 seconds of game time is not a fight that ended.
+        if ([int]$Matches[2] -ge 150) { $res[$cur].outcome = "story exit to $($Matches[1])" } else { $res[$cur].outcome = "left at once for $($Matches[1])" }
+    }
     elseif ($l -match '^SWEEP crash i=\d+ (\w+)') { $res[$cur].outcome = "game $($Matches[1])" }
     elseif ($l -match '^STATE VICTORY') { if ($res[$cur].outcome -eq 'none') { $res[$cur].outcome = 'victory' } }
     elseif ($l -match '^STATE DEFEAT') { if ($res[$cur].outcome -eq 'none') { $res[$cur].outcome = 'defeat' } }
@@ -25,10 +29,12 @@ foreach ($l in $lines) {
 $summary = @()
 for ($i = 0; $i -lt $doc.encounters.Count; $i++) {
     $e = $doc.encounters[$i]
-    if (-not $res.ContainsKey($i)) { $e.status = 'untested'; $e.enabled = $false; $summary += "$i`t$($e.id)`tuntested"; continue }
+    # Entries this sweep did not run keep whatever an earlier sweep recorded.
+    if (-not $res.ContainsKey($i)) { continue }
     $r = $res[$i]
     switch -Regex ($r.outcome) {
         '^victory$' { $e.status = 'verified'; $e.enabled = $true }
+        '^story exit' { $e.status = 'verified'; $e.enabled = $true }
         '^(defeat|timeout)$' { $e.status = 'starts'; $e.enabled = $true }
         default { $e.status = 'needs-adapter'; $e.enabled = $false }
     }

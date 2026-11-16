@@ -432,9 +432,9 @@
                            "area":  "ruins",
                            "battlegroup":  22,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg28",
@@ -520,9 +520,9 @@
                            "area":  "snowdin",
                            "battlegroup":  36,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg135",
@@ -531,9 +531,9 @@
                            "area":  "snowdin",
                            "battlegroup":  135,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg23",
@@ -586,9 +586,9 @@
                            "area":  "snowdin",
                            "battlegroup":  27,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg40",
@@ -696,9 +696,9 @@
                            "area":  "waterfall",
                            "battlegroup":  45,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg93",
@@ -718,9 +718,9 @@
                            "area":  "waterfall",
                            "battlegroup":  91,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg47",
@@ -729,9 +729,9 @@
                            "area":  "waterfall",
                            "battlegroup":  47,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg58",
@@ -740,9 +740,9 @@
                            "area":  "waterfall",
                            "battlegroup":  58,
                            "adapter":  "generic_battlegroup",
-                           "status":  "needs-adapter",
-                           "enabled":  false,
-                           "sweepOutcome":  "escaped to room_water_undyneyard"
+                           "status":  "verified",
+                           "enabled":  true,
+                           "sweepOutcome":  "story exit to room_water_undyneyard"
                        },
                        {
                            "id":  "bg92",
@@ -751,9 +751,9 @@
                            "area":  "waterfall",
                            "battlegroup":  92,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg50",
@@ -830,7 +830,7 @@
                            "adapter":  "generic_battlegroup",
                            "status":  "starts",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "timeout"
                        },
                        {
                            "id":  "bg83",
@@ -841,7 +841,7 @@
                            "adapter":  "generic_battlegroup",
                            "status":  "starts",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "timeout"
                        },
                        {
                            "id":  "bg84",
@@ -874,7 +874,7 @@
                            "adapter":  "generic_battlegroup",
                            "status":  "starts",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "timeout"
                        },
                        {
                            "id":  "bg49",
@@ -883,9 +883,9 @@
                            "area":  "hotland",
                            "battlegroup":  49,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg76",
@@ -905,9 +905,9 @@
                            "area":  "hotland",
                            "battlegroup":  56,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg140",
@@ -916,9 +916,9 @@
                            "area":  "hotland",
                            "battlegroup":  140,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg48",
@@ -927,9 +927,9 @@
                            "area":  "hotland",
                            "battlegroup":  48,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg57",
@@ -1015,9 +1015,9 @@
                            "area":  "core",
                            "battlegroup":  64,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg65",
@@ -1048,9 +1048,9 @@
                            "area":  "core",
                            "battlegroup":  67,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg68",
@@ -1059,9 +1059,9 @@
                            "area":  "core",
                            "battlegroup":  68,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg81",
@@ -1070,9 +1070,9 @@
                            "area":  "core",
                            "battlegroup":  81,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "timeout"
+                           "sweepOutcome":  "victory"
                        },
                        {
                            "id":  "bg94",
@@ -1094,7 +1094,7 @@
                            "adapter":  "generic_battlegroup",
                            "status":  "starts",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "timeout"
                        },
                        {
                            "id":  "bg100",
@@ -1114,9 +1114,9 @@
                            "area":  "barrier",
                            "battlegroup":  101,
                            "adapter":  "generic_battlegroup",
-                           "status":  "starts",
+                           "status":  "verified",
                            "enabled":  true,
-                           "sweepOutcome":  "defeat"
+                           "sweepOutcome":  "story exit to room_emptywhite"
                        },
                        {
                            "id":  "bg255",

@@ -48,6 +48,10 @@ else
     {
         title = "SETTINGS";
     }
+    if (page == 7)
+    {
+        title = "TRAINING MODE";
+    }
     if (page == 3)
     {
         title = "DEFEAT";
@@ -74,6 +78,10 @@ if (page == 2)
 if (page == 5)
 {
     by2 += 76;
+}
+if (page == 7)
+{
+    by2 += 56;
 }
 if (page == 3)
 {
@@ -212,6 +220,55 @@ for (i = 0; i < row_n; i += 1)
             label = "BACK";
         }
     }
+    if (page == 7)
+    {
+        var onoff = "< OFF >";
+        if (i == 0)
+        {
+            label = "TRAINING MODE";
+            if (global.ube_training == 1)
+            {
+                onoff = "< ON >";
+            }
+            val = onoff;
+        }
+        if (i == 1)
+        {
+            label = "INFINITE HP";
+            if (global.ube_t_infhp == 1)
+            {
+                onoff = "< ON >";
+            }
+            val = onoff;
+        }
+        if (i == 2)
+        {
+            label = "GAME SPEED";
+            val = "< " + string(global.ube_t_speed) + "% >";
+        }
+        if (i == 3)
+        {
+            label = "RETRY WITH [R]";
+            if (global.ube_t_retry == 1)
+            {
+                onoff = "< ON >";
+            }
+            val = onoff;
+        }
+        if (i == 4)
+        {
+            label = "SHOW HITBOXES";
+            if (global.ube_t_hitbox == 1)
+            {
+                onoff = "< ON >";
+            }
+            val = onoff;
+        }
+        if (i == 5)
+        {
+            label = "BACK";
+        }
+    }
     ry = row_y0 + ((i - scroll) * row_h);
     draw_set_color(c_white);
     if (row_on[i] == 0)
@@ -239,6 +296,10 @@ for (i = 0; i < row_n; i += 1)
         {
             vx = row_x + 50;
         }
+        if (page == 7)
+        {
+            vx = row_x + 250;
+        }
         draw_text_transformed(vx, ry, val, 2, 2, 0);
     }
 }
@@ -258,6 +319,14 @@ var hint_y = 456;
 if (page == 0)
 {
     var summary = "LV " + string(global.ube_lv) + "    HP " + string(curhp) + "/" + string(maxhp) + "    " + wname + "    " + aname;
+    if (global.ube_training == 1)
+    {
+        summary += "    TRAINING MODE";
+    }
+    else
+    {
+        summary += "    AUTHENTIC MODE";
+    }
     draw_set_color(c_white);
     draw_text(320 - (string_width(summary) / 2), by2 + 4, summary);
     hint_y = 462;
@@ -344,6 +413,21 @@ if (page == 2)
     draw_text_transformed(row_x, by2 - 44, "AT " + string(at - 10) + " (" + string(ws) + ")     DF " + string(df - 10) + " (" + string(ad) + ")", 2, 2, 0);
     hint = "[LEFT/RIGHT] Change    [Z] Select    [X] Back";
 }
+if (page == 7)
+{
+    draw_set_color(c_gray);
+    if (global.ube_training == 1)
+    {
+        draw_text(row_x, by2 - 46, "Fights run on the original code with these helpers added.");
+        draw_text(row_x, by2 - 26, "Hits and damage taken are counted and shown after the fight.");
+    }
+    else
+    {
+        draw_text(row_x, by2 - 46, "OFF = Authentic Mode: fights run exactly as in the original,");
+        draw_text(row_x, by2 - 26, "and none of the options above are active.");
+    }
+    hint = "[LEFT/RIGHT] or [Z] Change    [X] Back";
+}
 if (page == 6)
 {
     hint = "[LEFT/RIGHT] Change item    [C] Empty the slot    [X] Back";
@@ -361,7 +445,11 @@ if (page == 3)
     draw_text_transformed(96, 116, "* " + global.ube_enc_name[global.ube_last], 2, 2, 0);
     if (res_win == 1)
     {
-        if (res_kills > 0)
+        if (res_story == 1)
+        {
+            draw_text_transformed(96, 152, "* The fight is over.", 2, 2, 0);
+        }
+        else if (res_kills > 0)
         {
             draw_text_transformed(96, 152, "* YOU WON!", 2, 2, 0);
         }
@@ -376,6 +464,19 @@ if (page == 3)
     {
         draw_text_transformed(96, 152, "* Your HP reached 0.", 2, 2, 0);
         draw_text_transformed(96, 188, "* Stay determined...", 2, 2, 0);
+    }
+    if (res_training == 1)
+    {
+        draw_set_color(c_yellow);
+        if (res_hits == 0 && res_win == 1)
+        {
+            draw_text_transformed(96, 260, "* NO HIT!", 2, 2, 0);
+        }
+        else
+        {
+            draw_text_transformed(96, 260, "* Hit " + string(res_hits) + " times, " + string(res_dmg) + " HP lost.", 2, 2, 0);
+        }
+        draw_set_color(c_white);
     }
 }
 draw_set_color(c_gray);

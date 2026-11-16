@@ -23,6 +23,7 @@ if (page == 4)
         res_hp = global.hp;
         res_maxhp = global.maxhp;
         caster_free(all);
+        global.ube_mus_on = 0;
         global.inbattle = 0;
         global.border = 0;
         global.ube_state = 4;
@@ -41,6 +42,14 @@ if (page == 4)
         ptimer = 0;
     }
     exit;
+}
+
+// ---- Menu music: "Home", the track obj_housemusic plays in Toriel's house.
+if (global.ube_mus_on == 0)
+{
+    global.ube_mus = caster_load("music/house1.ogg");
+    caster_loop(global.ube_mus, 0.8, 1);
+    global.ube_mus_on = 1;
 }
 
 // ---- Input
@@ -85,8 +94,9 @@ if (page != 1)
 }
 if (page == 0)
 {
-    row_y0 = 120;
-    row_h = 40;
+    row_x = 214;
+    row_y0 = 196;
+    row_h = 34;
     row_n = menu_n;
     for (i = 0; i < row_n; i += 1)
     {
@@ -95,9 +105,10 @@ if (page == 0)
 }
 if (page == 1)
 {
-    row_y0 = 176;
-    row_h = 32;
-    vis = 7;
+    row_x = 96;
+    row_y0 = 180;
+    row_h = 34;
+    vis = 6;
     // Fights in the current area tab and Monsters/Bosses tab, then BACK.
     fn = 0;
     for (i = 0; i < global.ube_enc_count; i += 1)
@@ -137,17 +148,31 @@ if (page == 1)
 }
 if (page == 2)
 {
-    row_y0 = 120;
-    row_h = 40;
-    row_n = 3;
-    row_on[0] = 1;
-    row_on[1] = 1;
-    row_on[2] = 1;
+    row_x = 96;
+    row_y0 = 112;
+    row_h = 38;
+    row_n = 6;
+    for (i = 0; i < row_n; i += 1)
+    {
+        row_on[i] = 1;
+    }
+}
+if (page == 6)
+{
+    row_x = 96;
+    row_y0 = 104;
+    row_h = 34;
+    row_n = 9;
+    for (i = 0; i < row_n; i += 1)
+    {
+        row_on[i] = 1;
+    }
 }
 if (page == 3)
 {
-    row_y0 = 300;
-    row_h = 40;
+    row_x = 214;
+    row_y0 = 304;
+    row_h = 36;
     row_n = 3;
     row_on[0] = 1;
     row_on[1] = 1;
@@ -155,7 +180,8 @@ if (page == 3)
 }
 if (page == 5)
 {
-    row_y0 = 120;
+    row_x = 96;
+    row_y0 = 130;
     row_h = 40;
     row_n = 2;
     row_on[0] = 1;
@@ -178,6 +204,11 @@ if (mouse_x >= 60 && mouse_x <= 580 && mouse_y >= row_y0)
     {
         mrow = -1;
     }
+}
+if (global.ube_test != "")
+{
+    // Self-tests must not be disturbed by wherever the real mouse pointer happens to be.
+    mrow = -1;
 }
 if (mrow >= 0)
 {
@@ -210,9 +241,9 @@ if (page == 1)
             focus = 2;
         }
     }
-    if (mouse_check_button_pressed(mb_left) && ptimer >= 4)
+    if (mouse_check_button_pressed(mb_left) && ptimer >= 4 && global.ube_test == "")
     {
-        if (mouse_y >= 84 && mouse_y < 106)
+        if (mouse_y >= 94 && mouse_y < 116)
         {
             for (i = 0; i < global.ube_area_count; i += 1)
             {
@@ -223,7 +254,7 @@ if (page == 1)
                 }
             }
         }
-        if (mouse_y >= 120 && mouse_y < 142)
+        if (mouse_y >= 128 && mouse_y < 150)
         {
             for (i = 0; i < 2; i += 1)
             {
@@ -386,18 +417,47 @@ if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd
         {
             if (global.ube_test == "menu")
             {
-                ube_log("EXIT test=menu");
-                game_end();
+                // Show the ITEMS page with sample contents for a screenshot (not saved).
+                global.ube_item[0] = 11;
+                global.ube_item[2] = 43;
+                page = 6;
+                sel = 2;
+                ptimer = 0;
                 exit;
             }
             global.ube_lv = 20;
             global.ube_hp = 0;
+            if (global.ube_test == "gear")
+            {
+                // Real Knife, The Locket, Butterscotch Pie in slot 2 (slot 1 left empty
+                // on purpose to check that the inventory is packed).
+                global.ube_lv = 1;
+                global.ube_hp = 5;
+                global.ube_weapon = 52;
+                global.ube_armor = 53;
+                global.ube_item[0] = 0;
+                global.ube_item[1] = 11;
+                global.ube_item[2] = 1;
+            }
             if (global.ube_test == "lose" || global.ube_test == "lose_then_win")
             {
                 global.ube_lv = 1;
                 global.ube_hp = 1;
             }
             ube_start_encounter(0);
+            exit;
+        }
+    }
+    if (page == 6)
+    {
+        if (ptimer == 20)
+        {
+            screen_save("ube_shot_items.png");
+        }
+        if (ptimer == 30)
+        {
+            ube_log("EXIT test=menu");
+            game_end();
             exit;
         }
     }
@@ -468,9 +528,7 @@ if (page == 5)
         // MOVEMENT: 0 = arrow keys, 1 = WASD (applied by obj_ube_input).
         global.ube_wasd = 1 - global.ube_wasd;
         snd_play(snd_select);
-        ini_open("ube_config.ini");
-        ini_write_real("Settings", "Movement", global.ube_wasd);
-        ini_close();
+        ube_save_config();
         ube_log("SETTINGS movement=" + string(global.ube_wasd));
         exit;
     }
@@ -518,6 +576,45 @@ if (page == 2)
         maxhp = 99;
     }
     var d = k_right - k_left;
+    if (d != 0 && (sel == 2 || sel == 3))
+    {
+        // WEAPON / ARMOR: step through the original equipment lists.
+        var li;
+        var pos = 0;
+        if (sel == 2)
+        {
+            for (li = 0; li < global.ube_wn; li += 1)
+            {
+                if (global.ube_wlist[li] == global.ube_weapon)
+                {
+                    pos = li;
+                }
+            }
+            pos = ((pos + d) + global.ube_wn) mod global.ube_wn;
+            global.ube_weapon = global.ube_wlist[pos];
+        }
+        else
+        {
+            for (li = 0; li < global.ube_an; li += 1)
+            {
+                if (global.ube_alist[li] == global.ube_armor)
+                {
+                    pos = li;
+                }
+            }
+            pos = ((pos + d) + global.ube_an) mod global.ube_an;
+            global.ube_armor = global.ube_alist[pos];
+        }
+        snd_play(snd_squeak);
+    }
+    if (k_ok && sel == 4)
+    {
+        snd_play(snd_select);
+        page = 6;
+        sel = 0;
+        ptimer = 0;
+        exit;
+    }
     if (d != 0)
     {
         if (sel == 0)
@@ -549,17 +646,42 @@ if (page == 2)
             global.ube_hp = nh;
         }
     }
-    if (k_back || (k_ok && sel == 2))
+    if (k_back || (k_ok && sel == 5))
     {
         snd_play(snd_select);
-        ini_open("ube_config.ini");
-        ini_write_real("Player", "LOVE", global.ube_lv);
-        ini_write_real("Player", "HP", global.ube_hp);
-        ini_close();
-        ube_log("CONFIG lv=" + string(global.ube_lv) + " hp=" + string(global.ube_hp));
+        ube_save_config();
+        ube_log("CONFIG lv=" + string(global.ube_lv) + " hp=" + string(global.ube_hp) + " weapon=" + string(global.ube_weapon) + " armor=" + string(global.ube_armor));
         global.ube_state = 0;
         page = 0;
         sel = 1;
+        ptimer = 0;
+    }
+    exit;
+}
+
+if (page == 6)
+{
+    // ITEMS: eight slots; left/right steps through item IDs 0 (empty) to 64.
+    if (sel < 8)
+    {
+        var di = k_right - k_left;
+        if (di != 0)
+        {
+            global.ube_item[sel] = ((global.ube_item[sel] + di) + (global.ube_item_max + 1)) mod (global.ube_item_max + 1);
+            snd_play(snd_squeak);
+        }
+        if (keyboard_check_pressed(ord("C")) || keyboard_check_pressed(vk_control))
+        {
+            global.ube_item[sel] = 0;
+            snd_play(snd_squeak);
+        }
+    }
+    if (k_back || (k_ok && sel == 8))
+    {
+        snd_play(snd_select);
+        ube_save_config();
+        page = 2;
+        sel = 4;
         ptimer = 0;
     }
     exit;

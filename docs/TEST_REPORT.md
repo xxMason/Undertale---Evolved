@@ -22,6 +22,8 @@ same independently (hash, size and modified time) around the whole run.
 | Settings: W does nothing in arrow mode; after switching MOVEMENT to WASD, S moves the menu cursor | `WASDCHK off sel=0`, `SETTINGS movement=1`, `WASDCHK on sel=0` |
 | WASD reaches the battle's movement input | `WASDCHK battle timeup=1` (`obj_time.up`, which `obj_heart` reads) |
 | Simulated arrow keys reach `keyboard_check_direct` | `KEYS check=1 direct=1 timeup=1` |
+| Weapon, armour and inventory reach the original battle (Real Knife, The Locket, items in slots 2 and 3) | `GEAR weapon=52 wstr=99 armor=53 adef=99 item0=11 item1=1 item2=0`: stats set by the game's own equip scripts, inventory packed from slot 0 |
+| A configured item works through the real ITEM menu | `GEAR used hp=20/20 item0=1`: Butterscotch Pie healed 5 to 20 HP and left the inventory |
 | LOVE and starting HP reach the original battle | battle screenshot shows `LV 1`, `HP 01 / 20`; LV 20 run shows 99/99 |
 | Winning returns to the results screen | `STATE VICTORY kills=1 xp=3 gold=2 hp=29/36` (EXP and gold from original code) |
 | Losing plays the original game over and returns | `STATE DEFEAT hp=0` |
@@ -78,6 +80,13 @@ Limits of the sweep:
   whether real key presses are affected in that window is unknown.
 - **Spare and flee endings.** They use the same return path as victory in the original
   code, but no test exercised them.
+- **Menu music.** The menu loops `mus_house1` ("Home", the track `obj_housemusic` plays
+  in Toriel's house) and stops it when a battle starts. The code runs without error, but
+  nobody has listened to it.
+- **Equipment and items beyond the tested set.** Only Real Knife, The Locket,
+  Butterscotch Pie and Monster Candy were exercised. Weapon and armour choices in the
+  menu were not driven by a test, and equipping gear from the inventory mid-battle was
+  not tried.
 - **WASD with a real keyboard.** The tests press W/A/S/D through simulated keys. The
   helper may add up to one frame of input delay in WASD mode; this was not measured.
 - **Mouse support** in the menus, including clicking tabs.
@@ -94,7 +103,6 @@ Limits of the sweep:
 
 ## Incomplete in milestone 1
 
-- Weapon, armour and inventory selection (fixed at Stick, Bandage, empty).
 - HP override above the normal maximum.
 - 97 of 98 catalogue entries are enabled, but 28 of them have unverified endings (see
   the sweep section).

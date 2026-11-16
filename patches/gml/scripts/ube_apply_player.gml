@@ -1,5 +1,5 @@
-// ube_apply_player(): apply the configured LOVE and starting HP to the original globals.
-// Must run after SCR_GAMESTART and before the encounter adapter.
+// ube_apply_player(): apply the configured LOVE, starting HP, equipment and inventory to
+// the original globals. Must run after SCR_GAMESTART and before the encounter adapter.
 // Stat formulas mirror gml_Object_obj_battlecontroller_Create_0 (which recomputes
 // maxhp/at/df from LV at battle start) so nothing here is overwritten unexpectedly.
 var xpt;
@@ -40,3 +40,24 @@ if (global.ube_hp >= 1 && global.ube_hp <= global.maxhp)
     global.hp = global.ube_hp;
 }
 global.ube_xp0 = global.xp;
+
+// Inventory: the original expects items packed from slot 0 with no gaps.
+var n = 0;
+var k;
+for (k = 0; k < 8; k += 1)
+{
+    global.item[k] = 0;
+}
+for (k = 0; k < 8; k += 1)
+{
+    if (global.ube_item[k] > 0)
+    {
+        global.item[n] = global.ube_item[k];
+        n += 1;
+    }
+}
+// Equipment through the game's own equip scripts, so weapon strength, armour defence and
+// the Cowboy Hat / temy armor attack bonuses follow the original rules. Slot -1 means
+// "do not put the previous equipment back into the inventory".
+scr_weaponeq(-1, global.ube_weapon);
+scr_armoreq(-1, global.ube_armor);

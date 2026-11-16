@@ -8,5 +8,6 @@ seq_i = 0;
 battles = 0;
 last_room = -1;
 esc = 0;
+gear_done = 0;
 ready = 0;
 probe = 0;

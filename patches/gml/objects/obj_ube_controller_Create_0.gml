@@ -20,6 +20,53 @@ if (!variable_global_exists("ube_boot"))
     global.ube_test = ini_read_string("Test", "Scenario", "");
     global.ube_sweep_i = floor(ini_read_real("Test", "Start", 0));
     global.ube_wasd = clamp(floor(ini_read_real("Settings", "Movement", 0)), 0, 1);
+    // Equipment lists are exactly the item IDs handled by scr_weaponeq / scr_armoreq.
+    global.ube_wlist[0] = 3;
+    global.ube_wlist[1] = 13;
+    global.ube_wlist[2] = 14;
+    global.ube_wlist[3] = 25;
+    global.ube_wlist[4] = 45;
+    global.ube_wlist[5] = 47;
+    global.ube_wlist[6] = 49;
+    global.ube_wlist[7] = 51;
+    global.ube_wlist[8] = 52;
+    global.ube_wn = 9;
+    global.ube_alist[0] = 4;
+    global.ube_alist[1] = 12;
+    global.ube_alist[2] = 15;
+    global.ube_alist[3] = 24;
+    global.ube_alist[4] = 44;
+    global.ube_alist[5] = 46;
+    global.ube_alist[6] = 48;
+    global.ube_alist[7] = 50;
+    global.ube_alist[8] = 53;
+    global.ube_alist[9] = 64;
+    global.ube_an = 10;
+    global.ube_item_max = 64;
+    var cfg_w = floor(ini_read_real("Player", "Weapon", 3));
+    var cfg_a = floor(ini_read_real("Player", "Armor", 4));
+    var ci;
+    global.ube_weapon = 3;
+    global.ube_armor = 4;
+    for (ci = 0; ci < global.ube_wn; ci += 1)
+    {
+        if (global.ube_wlist[ci] == cfg_w)
+        {
+            global.ube_weapon = cfg_w;
+        }
+    }
+    for (ci = 0; ci < global.ube_an; ci += 1)
+    {
+        if (global.ube_alist[ci] == cfg_a)
+        {
+            global.ube_armor = cfg_a;
+        }
+    }
+    for (ci = 0; ci < 8; ci += 1)
+    {
+        global.ube_item[ci] = clamp(floor(ini_read_real("Player", "Item" + string(ci), 0)), 0, global.ube_item_max);
+    }
+    global.ube_mus_on = 0;
     ini_close();
     instance_create(0, 0, obj_ube_input);
     ube_log("BOOT build=" + global.ube_build + " lv=" + string(global.ube_lv) + " hp=" + string(global.ube_hp) + " test=" + global.ube_test + " steam=" + string(steam_initialised()));
@@ -43,6 +90,9 @@ focus = 2;
 fn = 0;
 scroll = 0;
 vis = 99;
+// Title logo (the game's own sprite). The sprite is mostly transparent padding around
+// the logo, so it is drawn 300 px tall and positioned so the logo sits above the subtitle.
+logo_s = 300 / sprite_get_height(spr_undertaletitle);
 res_win = 0;
 res_kills = 0;
 res_xp = 0;

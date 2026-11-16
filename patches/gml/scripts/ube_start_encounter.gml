@@ -2,6 +2,7 @@
 var idx = argument0;
 global.ube_state = 2;
 caster_free(all);
+global.ube_mus_on = 0;
 SCR_GAMESTART();
 global.inbattle = 0;
 global.ube_last = idx;

@@ -7,5 +7,5 @@
   "armor": 4,
   "items": [0, 0, 0, 0, 0, 0, 0, 0],
   "authentic": true,
-  "notes": "startingHp 0 means full HP for the chosen LOVE. weapon/armor/items use original item IDs (3 = Stick, 4 = Bandage) and are recorded for forward compatibility; milestone 1 applies love and startingHp only."
+  "notes": "startingHp 0 means full HP for the chosen LOVE. weapon, armor and items use original item IDs (3 = Stick, 4 = Bandage, 0 = empty slot, 1-64 = items)."
 }

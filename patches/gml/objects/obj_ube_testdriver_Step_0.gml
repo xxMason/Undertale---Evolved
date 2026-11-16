@@ -18,7 +18,40 @@ if (room == room_battle || room == room_gameover)
         shot = 1;
         screen_save("ube_shot_battle.png");
     }
-    if ((t mod 8) == 0)
+    if (global.ube_test == "gear" && room == room_battle)
+    {
+        // Report what the original battle code ended up with, then use the first item
+        // through the real ITEM menu (right twice, confirm twice).
+        if (t == 30)
+        {
+            ube_log("GEAR weapon=" + string(global.weapon) + " wstr=" + string(global.wstrength) + " armor=" + string(global.armor) + " adef=" + string(global.adef) + " item0=" + string(global.item[0]) + " item1=" + string(global.item[1]) + " item2=" + string(global.item[2]) + " hp=" + string(global.hp));
+        }
+        if (t == 180 || t == 195)
+        {
+            keyboard_key_press(vk_right);
+        }
+        if (t == 184 || t == 199)
+        {
+            keyboard_key_release(vk_right);
+        }
+        if (t > 220 && gear_done == 0 && global.item[0] != 11)
+        {
+            gear_done = 1;
+            ube_log("GEAR used hp=" + string(global.hp) + "/" + string(global.maxhp) + " item0=" + string(global.item[0]));
+        }
+        if (gear_done >= 1)
+        {
+            gear_done += 1;
+        }
+        if (gear_done == 30 || t > 1500)
+        {
+            keyboard_key_release(ord("Z"));
+            global.ube_result = 3;
+            caster_free(all);
+            room_goto(room_ube_menu);
+        }
+    }
+    if ((t mod 8) == 0 && (global.ube_test != "gear" || t >= 220))
     {
         keyboard_key_press(ord("Z"));
     }

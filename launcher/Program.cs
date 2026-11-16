@@ -56,7 +56,7 @@ namespace Ube
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|win|lose|lose_then_win] [--sweep] [--sweep-from <n>] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|win|lose|lose_then_win] [--sweep] [--sweep-from <n>] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
@@ -470,9 +470,29 @@ namespace Ube
             if (love < 1 || love > 20) throw new UbeException(ExitUsage, "Profile 'love' must be 1-20.");
             int maxHp = love == 20 ? 99 : 16 + love * 4;
             if (hp < 0 || hp > maxHp) throw new UbeException(ExitUsage, "Profile 'startingHp' must be 0 (full) or 1-" + maxHp + " at LOVE " + love + ".");
+            // Item IDs handled by the original scr_weaponeq / scr_armoreq.
+            int[] weapons = { 3, 13, 14, 25, 45, 47, 49, 51, 52 }, armors = { 4, 12, 15, 24, 44, 46, 48, 50, 53, 64 };
+            int weapon = p.ContainsKey("weapon") ? Convert.ToInt32(p["weapon"]) : 3;
+            int armor = p.ContainsKey("armor") ? Convert.ToInt32(p["armor"]) : 4;
+            if (!weapons.Contains(weapon)) throw new UbeException(ExitUsage, "Profile 'weapon' must be one of: " + string.Join(", ", weapons));
+            if (!armors.Contains(armor)) throw new UbeException(ExitUsage, "Profile 'armor' must be one of: " + string.Join(", ", armors));
+            var items = new int[8];
+            if (p.ContainsKey("items"))
+            {
+                var list = (System.Collections.ArrayList)p["items"];
+                if (list.Count > 8) throw new UbeException(ExitUsage, "Profile 'items' can hold at most 8 entries.");
+                for (int i = 0; i < list.Count; i++)
+                {
+                    items[i] = Convert.ToInt32(list[i]);
+                    if (items[i] < 0 || items[i] > 64) throw new UbeException(ExitUsage, "Profile item IDs must be 0 (empty) to 64.");
+                }
+            }
             IniSet(ini, "Player", "LOVE", love.ToString());
             IniSet(ini, "Player", "HP", hp.ToString());
-            Log("Applied profile " + path + ": LOVE " + love + ", starting HP " + (hp == 0 ? "full" : hp.ToString()));
+            IniSet(ini, "Player", "Weapon", weapon.ToString());
+            IniSet(ini, "Player", "Armor", armor.ToString());
+            for (int i = 0; i < 8; i++) IniSet(ini, "Player", "Item" + i, items[i].ToString());
+            Log("Applied profile " + path + ": LOVE " + love + ", starting HP " + (hp == 0 ? "full" : hp.ToString()) + ", weapon " + weapon + ", armor " + armor);
         }
 
         static void ExportProfile(string ini, string path)
@@ -481,6 +501,8 @@ namespace Ube
             {
                 { "schema", 1 }, { "name", Path.GetFileNameWithoutExtension(path) },
                 { "love", (int)IniGetNumber(ini, "Player", "LOVE", 1) }, { "startingHp", (int)IniGetNumber(ini, "Player", "HP", 0) },
+                { "weapon", (int)IniGetNumber(ini, "Player", "Weapon", 3) }, { "armor", (int)IniGetNumber(ini, "Player", "Armor", 4) },
+                { "items", Enumerable.Range(0, 8).Select(i => (int)IniGetNumber(ini, "Player", "Item" + i, 0)).ToArray() },
                 { "authentic", true }
             };
             File.WriteAllText(path, new JavaScriptSerializer().Serialize(o));
@@ -533,6 +555,7 @@ namespace Ube
             string[] expect;
             if (scenario == "menu") expect = new[] { "BOOT ", "EXIT" };
             else if (scenario == "keys") expect = new[] { "BOOT ", "KEYS check=1 direct=1 timeup=1", "EXIT" };
+            else if (scenario == "gear") expect = new[] { "BOOT ", "STATE IN_BATTLE id=froggit battlegroup=4 lv=1 hp=5/20", "GEAR weapon=52 wstr=99 armor=53 adef=99 item0=11 item1=1 item2=0 hp=5", "GEAR used hp=20/20 item0=1", "STATE ABORTED", "EXIT" };
             else if (scenario == "wasd") expect = new[] { "BOOT ", "WASDCHK off sel=0", "SETTINGS movement=1", "WASDCHK on sel=0", "STATE IN_BATTLE", "WASDCHK battle timeup=1", "STATE ", "EXIT" };
             else if (scenario == "win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else if (scenario == "lose") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "EXIT" };

@@ -82,11 +82,12 @@ var scrLog = NewScript("ube_log");
 var scrCatalogue = NewScript("ube_catalogue");
 var scrApply = NewScript("ube_apply_player");
 var scrStart = NewScript("ube_start_encounter");
+var scrSave = NewScript("ube_save_config");
 
 foreach (string fn in new[] { "file_text_open_append", "file_text_write_string", "file_text_writeln", "file_text_close",
     "ini_open", "ini_close", "ini_read_real", "ini_read_string", "ini_write_real", "screen_save", "game_end",
     "keyboard_key_press", "keyboard_key_release", "mouse_check_button_pressed", "window_set_caption",
-    "variable_global_exists", "steam_initialised", "room_get_name", "keyboard_check_direct", "draw_text_transformed", "string_width", "clamp" })
+    "variable_global_exists", "steam_initialised", "room_get_name", "keyboard_check_direct", "sprite_get_width", "sprite_get_height", "sprite_get_xoffset", "sprite_get_yoffset", "draw_sprite_ext", "min", "max", "draw_text_transformed", "string_width", "clamp" })
     Data.Functions.EnsureDefined(fn, Data.Strings);
 
 // ---- 3. Encounter catalogue generated from config/encounters.json ------------------------
@@ -155,6 +156,7 @@ importGroup.QueueReplace(scrLog, Gml("scripts/ube_log.gml"));
 importGroup.QueueReplace(scrCatalogue, cat.ToString());
 importGroup.QueueReplace(scrApply, Gml("scripts/ube_apply_player.gml"));
 importGroup.QueueReplace(scrStart, Gml("scripts/ube_start_encounter.gml"));
+importGroup.QueueReplace(scrSave, Gml("scripts/ube_save_config.gml"));
 importGroup.QueueReplace(controller.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_controller_Create_0.gml"));
 importGroup.QueueReplace(controller.EventHandlerFor(EventType.Step, (uint)0, Data), Gml("objects/obj_ube_controller_Step_0.gml"));
 importGroup.QueueReplace(controller.EventHandlerFor(EventType.Draw, (uint)0, Data), Gml("objects/obj_ube_controller_Draw_0.gml"));

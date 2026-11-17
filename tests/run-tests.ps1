@@ -67,6 +67,39 @@ if ((Test-Path $godot) -and (Test-Path (Join-Path $root 'godot\extracted\assets.
 } else {
     $results += [pscustomobject]@{ Test = 'Godot battle rules match the recorded real fight'; Pass = $false; Detail = 'skipped: Godot or godot\extracted missing (run scripts\prepare-godot.ps1)' }
 }
+
+# Godot engine running the original battle code (Godot prints harmless leak warnings on stderr).
+$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+if ((Test-Path $godot) -and (Test-Path (Join-Path $root 'godot\extracted\engine.json'))) {
+    $gd = Join-Path $root 'godot'
+    $rep = & $godot --headless --path $gd --script res://tools/parse_all.gd 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^PARSE' }
+    $results += [pscustomobject]@{ Test = 'Godot engine parses all original code'; Pass = ($rep -match 'failed=0'); Detail = ($rep -join ' | ') }
+    # Quick battles: Froggit and Dummy must be won; Papyrus (blue SOUL), Undyne (green),
+    # Muffet (purple) and Mettaton EX (yellow) must reach later turns without script errors.
+    $sw = & $godot --headless --path $gd -- --lv 20 --frames 1500 --sweep 0 1 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^SWEEP|SCRIPT ERROR' }
+    $won = @($sw | Where-Object { $_ -match 'YOU WON' }).Count
+    $results += [pscustomobject]@{ Test = 'Godot engine wins Dummy and Froggit'; Pass = ($won -eq 2 -and -not ($sw -match 'SCRIPT ERROR')); Detail = ($sw -join ' | ') }
+    # Collision rounding: the probe script's results in Godot must equal the real runner's
+    # (tests\coll_probe_reference.txt, logged by the real game in the trace scenario).
+    $cp = & $godot --headless --path $gd -- --collprobe 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^COLL' }
+    $cref = (Get-Content (Join-Path $root 'tests\coll_probe_reference.txt') -Raw).Trim()
+    $results += [pscustomobject]@{ Test = 'Godot collision rounding matches the real runner (probe)'; Pass = ("$cp".Trim() -eq $cref); Detail = $(if ("$cp".Trim() -eq $cref) { '' } else { "godot: $cp" }) }
+    # Frame-by-frame traces recorded from the real game (numbers only): same keys, same seed,
+    # every frame's HP, invincibility, SOUL position and object checksum must agree.
+    foreach ($tr in @(@{ g = 18; f = 535; file = 'trace_g18_vegetoid.txt' }, @{ g = 45; f = 330; file = 'trace_g45_maddummy.txt' }, @{ g = 92; f = 700; file = 'trace_g92_undying.txt' })) {
+        $tf = Join-Path $root "tests\$($tr.file)"
+        $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'scripts\trace-compare.ps1') -Group $tr.g -Seed 42 -Lv 20 -Frames $tr.f -RealTrace $tf 2>&1 | ForEach-Object { "$_" }
+        $results += [pscustomobject]@{ Test = "Godot matches the real game frame by frame ($($tr.file))"; Pass = ($LASTEXITCODE -eq 0); Detail = (($out | Where-Object { $_ -match '^MATCH|^FIRST DIFF|^FRAMES' }) -join ' | ') }
+    }
+    foreach ($b in 22, 30, 37, 38) {
+        $sw = & $godot --headless --path $gd -- --lv 20 --frames 1500 --sweep $b $b 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^SWEEP|SCRIPT ERROR' }
+        $turn = if (($sw -join ' ') -match 'turn=(\d+)') { [int]$matches[1] } else { 0 }
+        $results += [pscustomobject]@{ Test = "Godot engine runs battle $b through several turns"; Pass = ($turn -ge 2 -and -not ($sw -match 'SCRIPT ERROR')); Detail = ($sw -join ' | ') }
+    }
+} else {
+    $results += [pscustomobject]@{ Test = 'Godot engine runs the original battle code'; Pass = $false; Detail = 'skipped: Godot or godot\extracted\engine.json missing (run scripts\prepare-godot.ps1)' }
+}
+$ErrorActionPreference = $eap
 $after = Get-Snapshot $watched
 $changed = @()
 foreach ($k in $before.Keys) { if (-not $after.ContainsKey($k)) { $changed += "removed $k" } elseif ($after[$k] -ne $before[$k]) { $changed += "modified $k" } }

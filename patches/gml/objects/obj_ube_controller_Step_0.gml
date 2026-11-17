@@ -469,6 +469,70 @@ if (sel >= scroll + vis)
     scroll = (sel - vis) + 1;
 }
 
+// ---- Trace test: one fight (battlegroup from [Test] Trace = "group:seed:lv:frames") with
+// a seeded random generator, for a frame-by-frame comparison with the Godot engine.
+if (global.ube_test == "trace")
+{
+    if (page == 0 && global.ube_trace_started == 0 && variable_global_exists("ube_trace_ready"))
+    {
+        global.ube_trace_started = 1;
+        // Random generator probe: known seeds, raw results at full precision.
+        var s = "RNG";
+        var q;
+        random_set_seed(1);
+        for (q = 0; q < 6; q += 1)
+        {
+            s += " " + string_format(random(1), 0, 17);
+        }
+        random_set_seed(1);
+        for (q = 0; q < 4; q += 1)
+        {
+            s += " i" + string(irandom(1000000));
+        }
+        random_set_seed(12345);
+        for (q = 0; q < 3; q += 1)
+        {
+            s += " " + string_format(random(1), 0, 17);
+        }
+        random_set_seed(7);
+        s += " rr" + string_format(random_range(5, 10), 0, 17);
+        for (q = 0; q < 4; q += 1)
+        {
+            s += " ir" + string(irandom_range(3, 9));
+        }
+        for (q = 0; q < 4; q += 1)
+        {
+            s += " c" + string(choose(10, 20, 30, 40));
+        }
+        ube_log(s);
+        // Collision rounding probe; godot/engine.gd --collprobe runs the same script.
+        ube_log(ube_coll_probe());
+        // How the runner fills draw_line_width (read offline to fit Godot's line drawing).
+        ube_log(ube_draw_probe());
+        ube_log(ube_motion_probe());
+        var ci = -1;
+        var k;
+        for (k = 0; k < global.ube_enc_count; k += 1)
+        {
+            if (ci < 0 && global.ube_enc_group[k] == global.ube_trace_group)
+            {
+                ci = k;
+            }
+        }
+        if (ci < 0)
+        {
+            // Not in the catalogue: start through entry 0 and let ube_start_encounter
+            // replace the battlegroup with the requested one.
+            ci = 0;
+        }
+        global.ube_lv = global.ube_trace_lv;
+        global.ube_hp = 0;
+        ube_log("TRACE start group=" + string(global.ube_trace_group) + " seed=" + string(global.ube_trace_seed) + " lv=" + string(global.ube_trace_lv));
+        ube_start_encounter(ci);
+    }
+    exit;
+}
+
 // ---- Sweep test: start every catalogue entry in turn, enabled or not.
 if (global.ube_test == "sweep")
 {

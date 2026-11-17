@@ -20,6 +20,44 @@ if (!variable_global_exists("ube_boot"))
     global.ube_test = ini_read_string("Test", "Scenario", "");
     global.ube_sweep_i = floor(ini_read_real("Test", "Start", 0));
     global.ube_sweep_power = floor(ini_read_real("Test", "Power", 0));
+    // Scenario "trace": "group:seed:lv:frames".
+    global.ube_trace_started = 0;
+    global.ube_trace_group = 0;
+    global.ube_trace_seed = 1;
+    global.ube_trace_lv = 1;
+    global.ube_trace_frames = 1500;
+    global.ube_trace_watch = "";
+    var tspec = ini_read_string("Test", "Trace", "") + ":";
+    var tp;
+    for (tp = 0; tp < 5; tp += 1)
+    {
+        var tc = string_pos(":", tspec);
+        if (tc > 1 && tp == 4)
+        {
+            global.ube_trace_watch = string_copy(tspec, 1, tc - 1);
+        }
+        else if (tc > 1)
+        {
+            var tv = real(string_copy(tspec, 1, tc - 1));
+            if (tp == 0)
+            {
+                global.ube_trace_group = tv;
+            }
+            if (tp == 1)
+            {
+                global.ube_trace_seed = tv;
+            }
+            if (tp == 2)
+            {
+                global.ube_trace_lv = clamp(tv, 1, 20);
+            }
+            if (tp == 3)
+            {
+                global.ube_trace_frames = tv;
+            }
+        }
+        tspec = string_delete(tspec, 1, tc);
+    }
     global.ube_wasd = clamp(floor(ini_read_real("Settings", "Movement", 0)), 0, 1);
     // Equipment lists are exactly the item IDs handled by scr_weaponeq / scr_armoreq.
     global.ube_wlist[0] = 3;

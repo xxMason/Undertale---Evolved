@@ -14,6 +14,108 @@ if (room != last_room)
     seq_i = 0;
     last_room = room;
 }
+// Scenario "trace": wait in the menu until simulated keys are accepted (the runner ignores
+// them for a while after start-up), let the controller start the fight, then play it with
+// the same closed-loop policy as the Godot engine's auto-play. Keys set here are seen by
+// the game from the next frame on; the Begin Step records what it actually saw.
+if (global.ube_test == "trace")
+{
+    if (room == room_ube_menu && tr_f == 0)
+    {
+        if (kready == 0)
+        {
+            kp += 1;
+            if ((kp mod 10) == 1)
+            {
+                keyboard_key_press(81);
+            }
+            if ((kp mod 10) == 4)
+            {
+                if (keyboard_check(81))
+                {
+                    kready = 1;
+                    global.ube_trace_ready = 1;
+                }
+                keyboard_key_release(81);
+            }
+        }
+        exit;
+    }
+    if (room == room_ube_menu && tr_f > 0 && tr_done == 0)
+    {
+        tr_done = 1;
+        ube_log("TRACE done frames=" + string(tr_f) + " hp=" + string(global.hp) + " left=1");
+        game_end();
+        exit;
+    }
+    if (room == room_battle || room == room_gameover)
+    {
+        // Run as fast as the machine allows: no battle logic reads room_speed (it is only
+        // set for slow-motion effects and debug keys), so every frame is the same.
+        room_speed = 150;
+        var pf = tr_f + 1;
+        var want = 0;
+        if (room == room_gameover)
+        {
+            if ((pf mod 6) < 2)
+            {
+                want = 16;
+            }
+        }
+        else if (global.mnfight == 2)
+        {
+            if (((pf div 20) mod 2) == 0)
+            {
+                want += 1;
+            }
+            else
+            {
+                want += 2;
+            }
+            if ((pf mod 12) < 2)
+            {
+                want += 16;
+            }
+            if (((pf div 15) mod 4) == 1)
+            {
+                want += 4;
+            }
+        }
+        else if ((pf mod 6) < 2)
+        {
+            want = 16;
+        }
+        var kc;
+        kc[0] = vk_left;
+        kc[1] = vk_right;
+        kc[2] = vk_up;
+        kc[3] = vk_down;
+        kc[4] = ord("Z");
+        kc[5] = ord("X");
+        kc[6] = ord("C");
+        var kb;
+        for (kb = 0; kb < 7; kb += 1)
+        {
+            var bit = power(2, kb);
+            if ((want & bit) != 0 && (tr_keys & bit) == 0)
+            {
+                keyboard_key_press(kc[kb]);
+            }
+            if ((want & bit) == 0 && (tr_keys & bit) != 0)
+            {
+                keyboard_key_release(kc[kb]);
+            }
+        }
+        tr_keys = want;
+    }
+    total += 1;
+    if (total > 9000)
+    {
+        ube_log("TEST TIMEOUT room=" + string(room));
+        game_end();
+    }
+    exit;
+}
 if (room == room_battle || room == room_gameover)
 {
     t += 1;

@@ -29,3 +29,15 @@ v_done = 0;
 rec_on = 0;
 rec_f = 0;
 rec_keys = 0;
+// Scenario "trace" (frame-by-frame comparison with the Godot engine): battle frame
+// counter, keys held by the driver, keys the game saw this frame, and the frame cap.
+tr_f = 0;
+tr_keys = 0;
+tr_seen = 0;
+tr_done = 0;
+tr_max = global.ube_trace_frames;
+if (global.ube_test == "trace")
+{
+    // Drawn last, so the log line sees everything the frame's Draw events did.
+    depth = -100000;
+}

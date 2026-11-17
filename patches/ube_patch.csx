@@ -113,7 +113,7 @@ Data.GeneralInfo.RoomOrder.Add(new UndertaleResourceById<UndertaleRoom, Undertal
 var editor = NewObject("obj_ube_editor", false);
 editor.Depth = -1100;
 string[] editorScripts = { "ube_csv", "ube_csvr", "ube_ed_keys", "ube_ed_get", "ube_ed_set", "ube_ed_load", "ube_ed_save", "ube_index_write", "ube_row", "ube_list_n", "ube_list_get",
-    "ube_ui_btn", "ube_ui_step", "ube_live_line", "ube_live_parse", "ube_live_pack", "ube_live_unpack", "ube_live_push", "ube_live_store", "ube_live_load", "ube_live_leave" };
+    "ube_ui_btn", "ube_ui_step", "ube_live_line", "ube_live_parse", "ube_live_pack", "ube_live_unpack", "ube_live_push", "ube_live_store", "ube_live_load", "ube_live_leave", "ube_coll_probe", "ube_draw_probe", "ube_motion_probe" };
 var editorScriptCode = editorScripts.ToDictionary(s => s, s => NewScript(s));
 
 // Hitbox list for Training Mode: every object that has a collision event with obj_heart
@@ -165,7 +165,9 @@ foreach (string fn in new[] { "file_text_open_append", "file_text_write_string",
     "ds_map_create", "ds_map_clear", "ds_map_exists", "ds_map_add", "ds_map_replace", "ds_map_find_value",
     "string_replace_all", "chr", "real", "string_delete", "power", "string_char_at", "window_set_size", "window_center", "make_color_rgb", "string_format", "mouse_wheel_up", "mouse_wheel_down", "abs", "draw_triangle", "draw_line", "draw_line_width", "point_distance", "ceil", "mouse_check_button", "surface_resize", "surface_save", "window_get_width",
     "window_get_height", "surface_get_width", "surface_get_height", "window_mouse_get_x", "window_mouse_get_y", "ini_write_string", "draw_self", "instance_destroy", "instance_number",
-    "file_exists", "file_delete", "random", "floor", "round", "instance_exists", "caster_loop", "draw_text_transformed", "string_width", "clamp" })
+    "file_exists", "file_delete", "random", "floor", "round", "instance_exists", "caster_loop", "draw_text_transformed", "string_width", "clamp",
+    "random_set_seed", "irandom", "random_range", "irandom_range", "choose", "keyboard_check", "file_text_open_write", "object_get_name", "place_meeting",
+    "surface_getpixel", "colour_get_red", "draw_clear", "surface_create", "surface_set_target", "surface_reset_target", "surface_free", "degtorad", "cos", "draw_rectangle", "colour_get_green", "draw_set_alpha" })
     Data.Functions.EnsureDefined(fn, Data.Strings);
 
 // ---- 3. Encounter catalogue generated from config/encounters.json ------------------------
@@ -265,6 +267,8 @@ importGroup.QueueReplace(controller.EventHandlerFor(EventType.Draw, (uint)0, Dat
 importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_testdriver_Create_0.gml"));
 importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Step, (uint)0, Data), Gml("objects/obj_ube_testdriver_Step_0.gml"));
 importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Step, (uint)2, Data), Gml("objects/obj_ube_testdriver_Step_2.gml"));
+importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Step, (uint)1, Data), Gml("objects/obj_ube_testdriver_Step_1.gml"));
+importGroup.QueueReplace(testdriver.EventHandlerFor(EventType.Draw, (uint)0, Data), Gml("objects/obj_ube_testdriver_Draw_0.gml"));
 
 importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Create, Data), Gml("objects/obj_ube_input_Create_0.gml"));
 importGroup.QueueReplace(inputHelper.EventHandlerFor(EventType.Step, (uint)1, Data), Gml("objects/obj_ube_input_Step_1.gml"));

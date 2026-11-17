@@ -92,5 +92,18 @@ global.ube_t_lethal = 0;
 global.currentroom = room_ube_menu;
 global.ube_result = 0;
 global.ube_state = 3;
+// Scenario "trace": seed the generator after SCR_GAMESTART's randomize(), right before the
+// battle room is built, so the fight's random numbers are reproducible.
+if (global.ube_test == "trace")
+{
+    global.battlegroup = global.ube_trace_group;
+    random_set_seed(global.ube_trace_seed);
+    // The game clock some attacks read (Toriel's helix: sin(obj_time.time / 20)) starts
+    // from 0 here, as it does in the Godot engine, instead of counting the time in the menu.
+    with (obj_time)
+    {
+        time = 0;
+    }
+}
 ube_log("STATE IN_BATTLE id=" + enc_id +" battlegroup=" + string(global.battlegroup) + " lv=" + string(global.lv) + " hp=" + string(global.hp) + "/" + string(global.maxhp) + " training=" + string(global.ube_training));
 room_goto(room_battle);

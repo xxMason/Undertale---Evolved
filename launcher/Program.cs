@@ -1,4 +1,4 @@
-// Ultimate Battle Engine launcher.
+﻿// Ultimate Battle Engine launcher.
 // Targets the .NET Framework 4 compiler that ships with Windows (C# 5), see scripts/build.ps1.
 using System;
 using System.Collections.Generic;
@@ -38,7 +38,7 @@ namespace Ube
 
         static int Run(string[] args)
         {
-            string undertaleArg = null, profileArg = null, exportArg = null, selftest = null;
+            string undertaleArg = null, profileArg = null, exportArg = null, selftest = null, traceSpec = "";
             bool rebuild = false, prepareOnly = false, sweep = false, sweepPower = false;
             int sweepFrom = 0;
             for (int i = 0; i < args.Length; i++)
@@ -48,6 +48,7 @@ namespace Ube
                 else if (a == "--profile" && i + 1 < args.Length) profileArg = args[++i];
                 else if (a == "--export-profile" && i + 1 < args.Length) exportArg = args[++i];
                 else if (a == "--selftest" && i + 1 < args.Length) selftest = args[++i];
+                else if (a == "--trace" && i + 1 < args.Length) { selftest = "trace"; traceSpec = args[++i]; }
                 else if (a == "--sweep") sweep = true;
                 else if (a == "--sweep-unverified") { sweep = true; sweepPower = true; }
                 else if (a == "--sweep-from" && i + 1 < args.Length) { sweep = true; sweepFrom = int.Parse(args[++i]); }
@@ -57,7 +58,7 @@ namespace Ube
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|custom|custom_spare|editor|timeline|live|win|lose|lose_then_win] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|custom|custom_spare|editor|timeline|live|win|lose|lose_then_win] [--trace <group:seed:lv:frames>] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
@@ -122,6 +123,7 @@ namespace Ube
             if (profileArg != null) ApplyProfile(profileArg, ini);
             IniSet(ini, "Test", "Scenario", selftest ?? "");
             IniSet(ini, "Test", "Power", sweepPower ? "1" : "0");
+            IniSet(ini, "Test", "Trace", traceSpec);
             // Self-tests always start in arrow-key mode; the user's choice is restored afterwards.
             int savedMovement = (int)IniGetNumber(ini, "Settings", "Movement", 0);
             int savedTraining = (int)IniGetNumber(ini, "Training", "Enabled", 0);
@@ -739,6 +741,7 @@ namespace Ube
             else if (scenario == "win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else if (scenario == "lose") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "EXIT" };
             else if (scenario == "ui") expect = new[] { "BOOT ", "CONFIG lv=5 hp=33", "TABS area=0 cat=0 focus=2", "TABS area=0 cat=1 focus=1", "TABS area=1 cat=0 focus=0", "STATE IN_BATTLE id=froggit battlegroup=4 lv=5 hp=33/36", "STATE ", "EXIT" };
+            else if (scenario == "trace") expect = new[] { "BOOT ", "RNG ", "TRACE start", "STATE IN_BATTLE", "TRACE done" };
             else if (scenario == "lose_then_win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "RETRY", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else throw new UbeException(ExitUsage, "Unknown selftest scenario " + scenario);
             int pos = 0;

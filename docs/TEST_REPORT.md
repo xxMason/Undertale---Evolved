@@ -3,6 +3,10 @@
 Run on 2026-11-15 with `tests\run-tests.ps1` against Undertale v1.08 (Steam).
 Result: **9 of 9 automated checks passed.**
 
+Latest full run, 2026-11-17: **28 of 28 checks passed**, including the new Godot engine
+checks (all 6272 original code files parse; Dummy and Froggit won; Papyrus, Undyne,
+Muffet and Mettaton EX run several turns with their SOUL modes and no script errors).
+
 ## How the tests work
 
 The launcher's `--selftest <scenario>` starts the real patched game. A test driver inside
@@ -44,6 +48,116 @@ same independently (hash, size and modified time) around the whole run.
 | Original save location unchanged | `%LOCALAPPDATA%\UNDERTALE` absent before and after |
 | Missing or unknown game files are refused | exit code 2, nothing copied |
 | No game assets or binaries tracked by Git | `git ls-files` check |
+
+## Godot engine sweep (original battle code in Godot, 48 battles)
+
+Run on 2026-11-17: `godot --headless --path godot -- --lv 20 --frames 3000 --sweep 0 47`
+(see `GODOT_ENGINE.md`). Scripted input: confirm through text, FIGHT every turn, weave
+left and right, jump and confirm during attacks, confirm on the game-over screen.
+
+**No script errors and no missing GameMaker functions in any of the 48 battles.**
+
+| Result | Battles |
+|---|---|
+| Won (35) | Dummy, Froggit, Whimsun, Moldsmal, Migosp, Vegetoid, Loox, Napstablook, Parsnik, Moldessa, Migospel, Snowdrake, Chilldrake, Ice Cap, Gyftrot, Jerry, Doggo, Lesser Dog, Dogamy & Dogaressa, Greater Dog, Aaron, Woshua, Moldbygg, Temmie, Shyren, Glad Dummy, Tsunderplane, Vulkin, Pyrope, Mettaton NEO, Madjick, Knight Knight, Final Froggit, Whimsalot, Astigmatism |
+| Player died, original game over played and the battle ended (3) | Undyne the Undying (turn 6; see the argument bug below, now turn 1), Sans (turn 1), Asgore (turn 7) |
+| Still going at 3000 frames, turns advancing (10) | Toriel (turn 11), Glyde (10), Papyrus (7), Mad Dummy (7), Undyne (10), Royal Guards (10), So Sorry (8), Muffet (8), Mettaton EX (7, in the game over), Asriel (8) |
+
+The ten unfinished fights are ones the scripted input cannot end within 100 seconds:
+fights that need ACT or MERCY, bosses that cannot be killed by FIGHT alone (Mad Dummy,
+Asriel), and long boss fights. None of them is stuck: every one is several turns in.
+
+SOUL modes checked on screen during attacks (screenshots): blue gravity and jumping
+(Papyrus, Sans: `obj_heart.movement = 2`, landing and jump arcs traced frame by frame),
+green shield (Undyne), purple strings (Muffet), yellow shooting (Mettaton EX).
+
+Fixed during this sweep: GameMaker's Outside Room event was missing (55 objects use it to
+remove bullets; Asriel's stars piled up into the hundreds); equal-depth objects drew in an
+unstable order; curved paths were straight; `distance_to_point` and `sprite_delete` were
+missing. Asriel's fight went from about 39 ms to 10 ms per game frame.
+
+### Translated code vs interpreter (2026-11-17)
+
+The game's code now runs as translated GDScript (see "Speed" in `GODOT_ENGINE.md`). Both
+ways were swept with the same seeded random numbers
+(`--lv 20 --frames 1500 --sweep 0 47`, once with `--interp`): **all 48 battles gave
+identical results** (31 won, 2 ended in the original game over, 15 still going at the
+1500-frame cap), with no script errors. The translated sweep took 137 s against 253 s
+interpreted, headless.
+
+The comparison found a real bug in the interpreter: a script that assigns to its own
+arguments (`scr_sr` does `argument3 = 1`) stored the value on the instance, where the next
+script that instance ran read it as its argument. In Undyne the Undying this made every
+spear that got past the shield do 1 damage instead of 14. Fixed in both paths; earlier
+results for that fight (which survived to turn 6) were wrong.
+
+Windowed, LV 20, 900 frames, worst game frame (budget 33 ms): Asgore 16.6 ms, Sans
+13.4 ms, Undyne 11.0 ms, Asriel 8.6 ms; drawing under 1 ms. No frame over 20 ms.
+
+Mouse control (menus and battle buttons) is implemented but has only been checked by
+running the code, not by clicking through it by hand.
+
+### Frame-by-frame comparison with the real game (2026-11-17)
+
+`scripts\trace-compare.ps1` (see "Matching the real game" in `GODOT_ENGINE.md`) ran 43
+battles in the real game and in Godot with the same seed and the same keys, LV 20, up to
+1500 frames, comparing every frame: HP, karma, invincibility, the SOUL's position, battle
+state, object count and the sum of every battle object's position.
+
+**All 43 battles agree on every value of every frame**: Dummy, Froggit, Whimsun,
+Moldsmal, Loox, Vegetoid, Napstablook, Toriel, Doggo, Lesser Dog, Dogamy & Dogaressa,
+Greater Dog, Papyrus, Gyftrot, Snowdrake, Ice Cap, Jerry, Aaron, Temmie, Woshua, Shyren,
+Mad Dummy, Undyne, Royal Guards, Tsunderplane, Vulkin, Pyrope, Muffet, Madjick, Knight
+Knight, Final Froggit, Astigmatism, Whimsalot, Mettaton EX, Glad Dummy, Mettaton NEO, Sans
+(through the game over), Asgore, Parsnik, Glyde, So Sorry, Undyne the Undying (through the
+game-over heart shards) and Asriel. Not compared yet: Migosp, Moldessa, Migospel,
+Chilldrake, Moldbygg.
+
+The last two drifts were the runner's direction/speed conversion, measured with
+`ube_motion_probe`: single-precision pi and cos/sin, and hspeed, vspeed and speed snapped
+to a whole number within 0.0001 (a heart shard thrown at 270.2455 degrees falls at exactly
+7, not 6.99994). The Undying test in `run-tests.ps1` now covers all 700 recorded frames.
+
+Screenshots (`trace-compare.ps1 -Shots`, every 50 frames, pixel by pixel):
+- Sans: the Gaster Blaster beams went from 1,284 differing pixels to 1, after measuring
+  how the runner fills `draw_line_width` (`ube_draw_probe`).
+- Undyne: the background grid sat one row off at fractional heights (outlined rectangles
+  land on ceil()), and translucent drawing was one shade off (alpha is a byte,
+  floor(alpha * 255)); 6 of 20 frames are now identical, down from 0, and the rest differ
+  only by one unit (of 255) on blends that aren't whole numbers. That last unit depends on
+  the graphics card (this one rounds some blends down), so it is left alone.
+- Asgore and Papyrus: one-unit channel differences on faded or tinted sprites and text,
+  same cause. Papyrus: 15 of 20 frames identical.
+- Plain 1-pixel `draw_line` is still not exact (the runner leaves out one end pixel by a
+  rule not pinned down); a few thin strings and shadows use it.
+
+Smooth rendering (F2) now blends sizes, scales and angles as well as positions, so the
+battle box no longer comes apart while it resizes (seen on Undyne at half-way frames).
+
+Monster deaths: the dust (hundreds of one-pixel instances) made frames take 25-60 ms;
+caching the object-order list and each collision target's instances brought the worst
+frame of the Dummy's death under 20 ms (a frame has 33 ms), with all traces unchanged.
+
+What the comparisons found and fixed (each measured in the real game first, the
+collision rules with `ube_coll_probe`, whose 49 results now all agree):
+- Collision boxes are anchored on the mask's first column/row and sized by rounding
+  from there (a 1.5 px mask covers 1 or 2 pixels depending on where it starts).
+- Two rectangle masks only compare boxes, even when rotated (Madjick's cross zaps meeting
+  the box border); a rectangle against a precise mask is tested pixel by pixel.
+- The mask lookup multiplies by the single-precision reciprocal of the scale (Knight
+  Knight's growing sun bullets hit or missed the SOUL a frame early or late).
+- Reading `object.var` takes the oldest instance (Aaron's sweat drops fell at the wrong
+  speed).
+- Instances created during Draw at a lower depth are drawn the same frame (Sans's Gaster
+  Blasters started moving a frame late).
+- After `room_goto` the old room's remaining events are skipped and the new room runs that
+  frame (game over: one extra invincibility frame, and the game-over timers a frame late).
+- At room start every placed instance exists before any Create event runs (Sans's box
+  borders showed for a moment); the view position drives screen shake; `merge_colour`
+  rounds each channel (the HP bar's red).
+- Earlier in the same work: single-precision positions, speeds, scales, angles and alpha;
+  GameMaker's comparison epsilon; alarm rounding; right-to-left argument order; animation
+  timing.
 
 ## Encounter sweep (all 98 catalogue entries)
 

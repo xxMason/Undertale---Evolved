@@ -70,6 +70,33 @@ if (!variable_global_exists("ube_boot"))
     global.ube_mus_on = 0;
     global.ube_custom = 0;
     global.ube_last_name = "";
+    // Battle Creator editor state.
+    global.ube_ed_pending = 0;
+    global.ube_lab_pending = -1;
+    global.ube_ed_return = 0;
+    global.ube_lab = -1;
+    global.ube_ed_resumed = 0;
+    global.ube_ed_file = "";
+    global.ube_ed_i = 0;
+    global.ube_ed_rpage = 0;
+    global.ube_ed_ridx = 1;
+    global.ube_ed_rsel = 0;
+    global.ube_bigwin_done = 0;
+    // Live-build screen hand-offs: which attack it edits, whether a test fight should
+    // return to it, and whether the list editor should reopen after DONE.
+    global.ube_live_idx = 1;
+    global.ube_live_visits = 0;
+    global.ube_ed_rlive = 0;
+    global.ube_ed_reopen = 0;
+    global.ube_live_started = 0;
+    // Counters for the "verify" self-test.
+    global.ube_v_n = 0;
+    global.ube_v_sum = 0;
+    global.ube_v_max = 0;
+    global.ube_v_bad = 0;
+    global.ube_v_ofs = -1;
+    global.ube_v_spawned = 0;
+    ube_ed_keys();
     // Training Mode (all of it is ignored while Enabled is 0 = Authentic Mode).
     global.ube_training = clamp(floor(ini_read_real("Training", "Enabled", 0)), 0, 1);
     global.ube_t_infhp = clamp(floor(ini_read_real("Training", "InfiniteHP", 1)), 0, 1);
@@ -163,7 +190,18 @@ menu_on[3] = 1;
 menu_on[4] = 0;
 menu_on[5] = 1;
 menu_on[6] = 1;
-if (global.ube_state == 3 || global.ube_state == 7)
+if (global.ube_ed_reopen == 1)
+{
+    // Back from the live-build screen: reopen the list editor on the attack list.
+    global.ube_ed_reopen = 0;
+    global.ube_ed_resumed = 1;
+    global.ube_state = 0;
+    page = 9;
+    var red = instance_create(0, 0, obj_ube_editor);
+    red.epage = 4;
+    red.esel = 0;
+}
+else if (global.ube_state == 3 || global.ube_state == 7)
 {
     // We just came back from a battle (victory, mercy, flee or game over).
     // State 7 is accepted too because the original obj_gameover issues room_goto twice,

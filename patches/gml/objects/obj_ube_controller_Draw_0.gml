@@ -3,7 +3,7 @@ draw_set_color(c_black);
 draw_rectangle(0, 0, 640, 480, false);
 // page 4 = returning from a battle; ptimer 0 = the frame a page was switched, before
 // Step has laid that page out.
-if (page == 4 || ptimer == 0)
+if (page == 4 || page == 9 || ptimer == 0)
 {
     exit;
 }
@@ -230,6 +230,10 @@ for (i = 0; i < row_n; i += 1)
         {
             label = global.ube_cbl_name[i];
         }
+        else if (i == global.ube_cbl_count)
+        {
+            label = "+ NEW BOSS";
+        }
         else
         {
             label = "BACK";
@@ -431,11 +435,8 @@ if (page == 2)
 if (page == 8)
 {
     draw_set_color(c_gray);
-    draw_text(row_x, 96, "Bosses built from files in the simulator's custom folder.");
-    if (global.ube_cbl_count == 0)
-    {
-        draw_text(row_x, by2 + 10, "No custom bosses found.");
-    }
+    draw_text(row_x, 96, "Your own bosses. Fight one, edit it, or make a new one.");
+    hint = "[Z] Fight    [C] Edit    [X] Back";
 }
 if (page == 7)
 {

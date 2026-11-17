@@ -18,17 +18,17 @@ function Get-Snapshot([string[]]$dirs) {
     $s
 }
 
-$settings = Join-Path $root 'config\settings.json'
-$install = 'C:\Program Files (x86)\Steam\steamapps\common\Undertale'
-if (Test-Path $settings) { $p = (Get-Content $settings -Raw | ConvertFrom-Json).undertalePath; if ($p) { $install = $p } }
-$watched = @($install, (Join-Path $env:LOCALAPPDATA 'UNDERTALE'))
+# What must stay untouched: the launcher's verified copy of the original game (source\),
+# the Steam folder the game was first found in (whatever is in it now), and the original
+# save location.
+$watched = @((Join-Path $root 'source'), 'C:\Program Files (x86)\Steam\steamapps\common\Undertale', (Join-Path $env:LOCALAPPDATA 'UNDERTALE'))
 
 # Independent snapshot (hash + size + modified time), separate from the launcher's own check.
 $before = Get-Snapshot $watched
 $results = @()
 $profile = Join-Path $root 'profiles\default.json'
 
-foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'gear', 'train', 'custom', 'custom_spare', 'win', 'lose', 'lose_then_win') {
+foreach ($scenario in 'menu', 'keys', 'ui', 'wasd', 'gear', 'train', 'custom', 'custom_spare', 'editor', 'timeline', 'live', 'record', 'record2', 'win', 'lose', 'lose_then_win') {
     # The scenarios drive the game with simulated key presses, which the runner drops if
     # its window loses focus (for example when someone uses the PC during the run). A
     # failed scenario is retried once, and the report says so when that happens.
@@ -57,14 +57,24 @@ Remove-Item $fake -Recurse -Force
 
 & $exe --profile $profile --prepare-only --no-pause 2>&1 | Out-Null   # leave the default setup behind
 
+# Godot prototype: replay the recorded real-game fight through the Godot battle rules.
+$godot = 'C:\Program Files (x86)\Steam\steamapps\common\Godot Engine\godot.windows.opt.tools.64.exe'
+if ((Test-Path $godot) -and (Test-Path (Join-Path $root 'godot\extracted\assets.json'))) {
+    foreach ($ref in 'record_reference', 'record2_reference') {
+        $rep = & $godot --headless --path (Join-Path $root 'godot') --script res://replay.gd -- (Join-Path $root "tests\$ref.txt") 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^REPLAY|^  frame' }
+        $results += [pscustomobject]@{ Test = "Godot battle rules match the real game ($ref)"; Pass = ($LASTEXITCODE -eq 0); Detail = ($rep -join ' | ') }
+    }
+} else {
+    $results += [pscustomobject]@{ Test = 'Godot battle rules match the recorded real fight'; Pass = $false; Detail = 'skipped: Godot or godot\extracted missing (run scripts\prepare-godot.ps1)' }
+}
 $after = Get-Snapshot $watched
 $changed = @()
 foreach ($k in $before.Keys) { if (-not $after.ContainsKey($k)) { $changed += "removed $k" } elseif ($after[$k] -ne $before[$k]) { $changed += "modified $k" } }
 foreach ($k in $after.Keys) { if (-not $before.ContainsKey($k)) { $changed += "added $k" } }
-$results += [pscustomobject]@{ Test = "originals unchanged ($($before.Count) entries: install + %LOCALAPPDATA%\UNDERTALE)"; Pass = ($changed.Count -eq 0); Detail = ($changed -join '; ') }
+$results += [pscustomobject]@{ Test = "originals unchanged ($($before.Count) entries: verified copy, Steam folder, %LOCALAPPDATA%\UNDERTALE)"; Pass = ($changed.Count -eq 0); Detail = ($changed -join '; ') }
 
 $tracked = & git -C $root ls-files
-$bad = $tracked | Where-Object { $_ -match '\.(win|ogg|exe|dll|zip)$' -or $_ -match '^(game|tools|build)/' }
+$bad = $tracked | Where-Object { $_ -match '\.(win|ogg|exe|dll|zip)$' -or $_ -match '^(game|tools|build|source)/' }
 $results += [pscustomobject]@{ Test = 'no game assets or binaries tracked by Git'; Pass = (-not $bad); Detail = ($bad -join '; ') }
 
 $results | ForEach-Object { '{0}  {1}{2}' -f $(if ($_.Pass) { 'PASS' } else { 'FAIL' }), $_.Test, $(if ($_.Detail) { "`n        $($_.Detail)" } else { '' }) }

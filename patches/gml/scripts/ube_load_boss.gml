@@ -72,6 +72,41 @@ for (k = 1; k <= 8; k += 1)
         global.ube_cb_at_dur[n] = clamp(floor(ini_read_real(sec, "Duration", 150)), 30, 900);
         global.ube_cb_at_dmg[n] = max(1, floor(ini_read_real(sec, "Damage", global.ube_cb_atk)));
         global.ube_cb_at_sprite[n] = ini_read_string(sec, "Bullet", "spr_bulletmd");
+        // Timeline attacks (Pattern="timeline"): a custom box size and up to 40 placed
+        // objects. Each object is one line of comma-separated values:
+        //   sprite, start frame, x, y (from the box centre), angle, speed, aim at SOUL,
+        //   repeat count, frames between repeats, damage, size, spin, face direction
+        global.ube_cb_at_boxw[n] = clamp(floor(ini_read_real(sec, "BoxW", 0)), 0, 570);
+        global.ube_cb_at_boxh[n] = clamp(floor(ini_read_real(sec, "BoxH", 0)), 0, 300);
+        var on = 0;
+        if (pt == "timeline")
+        {
+            var oc = clamp(floor(ini_read_real(sec, "Objects", 0)), 0, 40);
+            var oi;
+            for (oi = 1; oi <= oc; oi += 1)
+            {
+                var ol = ini_read_string(sec, "O" + string(oi), "");
+                if (ol != "")
+                {
+                    var ok = (n * 40) + on;
+                    global.ube_cb_o_spr[ok] = ube_csv(ol, 0);
+                    global.ube_cb_o_time[ok] = max(0, floor(ube_csvr(ol, 1)));
+                    global.ube_cb_o_x[ok] = ube_csvr(ol, 2);
+                    global.ube_cb_o_y[ok] = ube_csvr(ol, 3);
+                    global.ube_cb_o_ang[ok] = ube_csvr(ol, 4);
+                    global.ube_cb_o_spd[ok] = clamp(ube_csvr(ol, 5), 0, 20);
+                    global.ube_cb_o_aim[ok] = ube_csvr(ol, 6);
+                    global.ube_cb_o_cnt[ok] = clamp(floor(ube_csvr(ol, 7)), 1, 60);
+                    global.ube_cb_o_every[ok] = clamp(floor(ube_csvr(ol, 8)), 1, 600);
+                    global.ube_cb_o_dmg[ok] = max(1, floor(ube_csvr(ol, 9)));
+                    global.ube_cb_o_size[ok] = clamp(ube_csvr(ol, 10), 0.25, 8);
+                    global.ube_cb_o_spin[ok] = ube_csvr(ol, 11);
+                    global.ube_cb_o_face[ok] = ube_csvr(ol, 12);
+                    on += 1;
+                }
+            }
+        }
+        global.ube_cb_at_objn[n] = on;
         global.ube_cb_atk_n += 1;
     }
 }

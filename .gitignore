@@ -11,3 +11,6 @@
 *.pdb
 *.zip
 /config/settings.json
+/source/
+/godot/extracted/
+/godot/.godot/

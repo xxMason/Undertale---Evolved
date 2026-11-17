@@ -57,7 +57,7 @@ namespace Ube
                 else
                 {
                     Console.WriteLine("Usage: UltimateBattleEngine.exe [--undertale <folder>] [--profile <json>] [--export-profile <json>]");
-                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|custom|custom_spare|win|lose|lose_then_win] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
+                    Console.WriteLine("                                [--rebuild] [--prepare-only] [--selftest menu|keys|ui|wasd|gear|train|custom|custom_spare|editor|timeline|live|win|lose|lose_then_win] [--sweep] [--sweep-unverified] [--sweep-from <n>] [--no-pause]");
                     return a == "--help" ? ExitOk : ExitUsage;
                 }
             }
@@ -76,12 +76,37 @@ namespace Ube
             string gameDir = Path.Combine(root, "game");
 
             // 1. Locate and verify the original installation (read-only).
-            string install = LocateUndertale(undertaleArg);
-            string label = VerifyCompatible(install, compat);
-            Log("Original installation: " + install + "  [" + label + "]");
-            if (undertaleArg != null)
-                File.WriteAllText(Path.Combine(root, "config", "settings.json"),
-                    new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "undertalePath", install } }));
+            // A verified copy of the original files is kept in <project>\source so that later
+            // changes to the Steam folder (mods, updates) cannot break the simulator. The
+            // copy is made once, from a folder whose files match a supported version.
+            string sourceCache = Path.Combine(root, "source");
+            string install;
+            string label;
+            if (undertaleArg == null && IsSupported(sourceCache, compat, out label))
+            {
+                install = sourceCache;
+                Log("Using the verified copy of the original game: " + install + "  [" + label + "]");
+            }
+            else
+            {
+                string found = LocateUndertale(undertaleArg, compat, out label);
+                Log("Original installation: " + found + "  [" + label + "]");
+                if (undertaleArg != null)
+                    File.WriteAllText(Path.Combine(root, "config", "settings.json"),
+                        new JavaScriptSerializer().Serialize(new Dictionary<string, object> { { "undertalePath", found } }));
+                if (Directory.Exists(sourceCache)) Directory.Delete(sourceCache, true);
+                Directory.CreateDirectory(sourceCache);
+                int cached = 0;
+                foreach (string src in Directory.GetFiles(found, "*", SearchOption.AllDirectories))
+                {
+                    string dst = Path.Combine(sourceCache, src.Substring(found.Length).TrimStart('\\'));
+                    Directory.CreateDirectory(Path.GetDirectoryName(dst));
+                    File.Copy(src, dst, true);
+                    cached++;
+                }
+                Log("Copied " + cached + " original files to " + sourceCache + ".");
+                install = sourceCache;
+            }
 
             // 2. Working copy.
             PrepareWorkingCopy(install, gameDir, rebuild);
@@ -120,6 +145,31 @@ namespace Ube
             string gameLog = Path.Combine(saveDir, "ube_log.txt");
             int logLinesBefore = File.Exists(gameLog) ? File.ReadAllLines(gameLog).Length : 0;
 
+            // The editor self-test creates a boss; remember what existed so it can be removed.
+            string customDir = Path.Combine(saveDir, "custom");
+            var bossesBefore = new HashSet<string>(Directory.GetFiles(customDir, "*.ini"), StringComparer.OrdinalIgnoreCase);
+            if (selftest == "record2")
+            {
+                File.Copy(Path.Combine(root, "tests", "bosses", "zz_record2.ini"), Path.Combine(customDir, "zz_record2.ini"), true);
+                InstallBosses(saveDir);
+            }
+            if (selftest == "record")
+            {
+                File.Copy(Path.Combine(root, "tests", "bosses", "zz_record.ini"), Path.Combine(customDir, "zz_record.ini"), true);
+                InstallBosses(saveDir);
+            }
+            if (selftest == "verify")
+            {
+                File.Copy(Path.Combine(root, "tests", "bosses", "zz_verify.ini"), Path.Combine(customDir, "zz_verify.ini"), true);
+                InstallBosses(saveDir);
+            }
+            if (selftest == "timeline")
+            {
+                // Test-only boss; removed again after the run like any boss a test creates.
+                File.Copy(Path.Combine(root, "tests", "bosses", "zz_timeline_test.ini"), Path.Combine(customDir, "zz_timeline_test.ini"), true);
+                InstallBosses(saveDir);
+            }
+
             Log("Launching " + RunnerName + (selftest != null ? " (selftest " + selftest + ")" : ""));
             var psi = new ProcessStartInfo(Path.Combine(gameDir, RunnerName)) { WorkingDirectory = gameDir, UseShellExecute = false };
             bool timedOut = false;
@@ -137,6 +187,9 @@ namespace Ube
                 IniSet(ini, "Test", "Scenario", "");
                 IniSet(ini, "Settings", "Movement", savedMovement.ToString());
                 IniSet(ini, "Training", "Enabled", savedTraining.ToString());
+                foreach (string f in Directory.GetFiles(customDir, "*.ini"))
+                    if (!bossesBefore.Contains(f)) { File.Delete(f); Log("Removed test boss " + Path.GetFileName(f)); }
+                InstallBosses(saveDir);
             }
 
             var after = SnapshotOriginals(install, originalSaveDir);
@@ -315,7 +368,50 @@ namespace Ube
             throw new UbeException(ExitMissing, "Cannot find the project folder (patches\\ube_patch.csx) next to or above the launcher.");
         }
 
-        static string LocateUndertale(string arg)
+        static bool IsSupported(string dir, Dictionary<string, object> compat, out string label)
+        {
+            label = null;
+            if (!File.Exists(Path.Combine(dir, "data.win")) || !File.Exists(Path.Combine(dir, "UNDERTALE.exe"))) return false;
+            string dataHash = Sha256(Path.Combine(dir, "data.win"));
+            string exeHash = Sha256(Path.Combine(dir, "UNDERTALE.exe"));
+            foreach (Dictionary<string, object> s in ((System.Collections.ArrayList)compat["supported"]))
+            {
+                var files = (Dictionary<string, object>)s["files"];
+                if (string.Equals((string)files["data.win"], dataHash, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals((string)files["UNDERTALE.exe"], exeHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    label = (string)s["label"];
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Returns the first candidate folder holding a supported, unmodified Undertale.
+        static string LocateUndertale(string arg, Dictionary<string, object> compat, out string label)
+        {
+            label = null;
+            var tried = new List<string>();
+            foreach (string c in UndertaleCandidates(arg))
+            {
+                tried.Add(c);
+                if (IsSupported(c, compat, out label)) return Path.GetFullPath(c);
+            }
+            // Nothing matched: explain why for the first folder that at least looks like the game.
+            foreach (string c in tried)
+                if (File.Exists(Path.Combine(c, "data.win")) && File.Exists(Path.Combine(c, "UNDERTALE.exe")))
+                    VerifyCompatible(c, compat);
+            foreach (string c in tried)
+                if (File.Exists(Path.Combine(c, "data.win")))
+                    throw new UbeException(ExitMissing, "The Undertale files in " + c + " have been changed (for example by a mod): UNDERTALE.exe is missing or data.win is not the original.\n" +
+                        "Point the simulator at an unmodified copy once:  UltimateBattleEngine.exe --undertale \"<folder with the original UNDERTALE.exe and data.win>\"\n" +
+                        "Nothing was copied or modified.");
+            throw new UbeException(ExitMissing, "Could not find an Undertale installation (data.win + UNDERTALE.exe).\n" +
+                "Checked: " + string.Join("; ", tried) + "\n" +
+                "Run:  UltimateBattleEngine.exe --undertale \"<folder containing UNDERTALE.exe>\"");
+        }
+
+        static List<string> UndertaleCandidates(string arg)
         {
             string settingsPath = Path.Combine(root, "config", "settings.json");
             var candidates = new List<string>();
@@ -329,15 +425,7 @@ namespace Ube
                 }
                 foreach (string steam in SteamRoots()) candidates.Add(Path.Combine(steam, "steamapps", "common", "Undertale"));
             }
-
-            foreach (string c in candidates)
-            {
-                if (File.Exists(Path.Combine(c, "data.win")) && File.Exists(Path.Combine(c, "UNDERTALE.exe")))
-                    return Path.GetFullPath(c);
-            }
-            throw new UbeException(ExitMissing, "Could not find an Undertale installation (data.win + UNDERTALE.exe).\n" +
-                "Checked: " + string.Join("; ", candidates) + "\n" +
-                "Run:  UltimateBattleEngine.exe --undertale \"<folder containing UNDERTALE.exe>\"");
+            return candidates;
         }
 
         static IEnumerable<string> SteamRoots()
@@ -636,6 +724,13 @@ namespace Ube
             string[] expect;
             if (scenario == "menu") expect = new[] { "BOOT ", "EXIT" };
             else if (scenario == "keys") expect = new[] { "BOOT ", "KEYS check=1 direct=1 timeup=1", "EXIT" };
+            else if (scenario == "live") expect = new[] { "BOOT ", "LIVE add n=1", "LIVE add n=2", "LIVE store objects=2", "STATE IN_BATTLE id=custom:boss_", "LIVE lab objects=2 bullets=1", "EDITOR resume", "LIVE store objects=2", "EXIT test=live" };
+            else if (scenario == "record2") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:zz_record2.ini", "RECORD done" };
+            else if (scenario == "record") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:zz_record.ini", "RECORD done" };
+            else if (scenario == "verify") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:zz_verify.ini", "CUSTOM boss=Verify Test", "VERIFY spawned=", "LAB exit", "EXIT" };
+            else if (scenario == "timeline") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:zz_timeline_test.ini", "CUSTOM boss=Timeline Test", "TL box=240x100", "CUSTOM bullets_seen=1", "STATE VICTORY kills=1", "EXIT" };
+            else if (scenario == "bigwin") expect = new[] { "BOOT ", "BIGWIN window=", "BIGWIN back", "EXIT test=bigwin" };
+            else if (scenario == "editor") expect = new[] { "BOOT ", "~hp=100 a1=rain count=2", "~hp=130 a1=aimed count=4", "STATE IN_BATTLE id=custom:boss_", "LAB1 count=4 pat=aimed mnfight=2", "LAB2 count=5 bullets=1", "LAB exit count=5", "~hp=130 a1=aimed count=5", "EDITOR resume page=5", "EXIT test=editor" };
             else if (scenario == "custom") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:", "CUSTOM boss=", "CUSTOM bullets_seen=1", "STATE VICTORY kills=1", "EXIT" };
             else if (scenario == "custom_spare") expect = new[] { "BOOT ", "STATE IN_BATTLE id=custom:", "CUSTOM boss=", "CUSTOM act=Talk points=1/2", "CUSTOM act=Talk points=2/2", "CUSTOM spared", "STATE VICTORY kills=0", "EXIT" };
             else if (scenario == "train") expect = new[] { "BOOT ", "STATE IN_BATTLE id=froggit battlegroup=4 lv=1 hp=1/20 training=1", "TRAIN speed=60 trainer=1", "TRAIN retry", "STATE IN_BATTLE id=froggit", "STATE VICTORY", "TRAIN hits=", "TRAIN survived_lethal_hit", "EXIT" };
@@ -647,7 +742,9 @@ namespace Ube
             else if (scenario == "lose_then_win") expect = new[] { "BOOT ", "STATE IN_BATTLE", "STATE DEFEAT", "RETRY", "STATE IN_BATTLE", "STATE VICTORY", "EXIT" };
             else throw new UbeException(ExitUsage, "Unknown selftest scenario " + scenario);
             int pos = 0;
-            foreach (string l in lines) if (pos < expect.Length && l.StartsWith(expect[pos])) pos++;
+            // An expectation starting with ~ matches anywhere in the line; others match its start.
+            foreach (string l in lines)
+                if (pos < expect.Length && (expect[pos].StartsWith("~") ? l.Contains(expect[pos].Substring(1)) : l.StartsWith(expect[pos]))) pos++;
             bool steamOff = lines.Any(l => l.StartsWith("BOOT ") && l.EndsWith("steam=0"));
             if (pos == expect.Length && !timedOut && steamOff)
             {

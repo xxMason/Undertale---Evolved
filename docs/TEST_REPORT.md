@@ -28,6 +28,12 @@ same independently (hash, size and modified time) around the whole run.
 | Authentic Mode has no trainer object | every other self-test logs `training=0`, and the trainer is only created when Training Mode is on |
 | Custom boss from a file fights as a real monster and can be killed | `CUSTOM boss=Sentinel hp=150 atk=5 def=0 acts=2 attacks=4`, `CUSTOM bullets_seen=1 max=15`, `STATE VICTORY kills=1 ... gold=40`; screenshots show its own sprite, intro text and bullets |
 | Custom boss can be talked down and spared through the real ACT and MERCY menus | `CUSTOM act=Talk points=1/2`, `points=2/2`, `CUSTOM spared`, `STATE VICTORY kills=0`; screenshots of the target list and ACT menu |
+| Boss editor: new boss, HP 100 to 130, attack pattern and count changed, saved | `EDITOR save ... hp=130 a1=aimed count=4`; driven with simulated keys |
+| Simple-attack lab: the attack loops, a number key retunes it live, Backspace returns and the change is kept | `LAB1 count=4 pat=aimed mnfight=2`, `LAB2 count=5 bullets=1`, `EDITOR save ... count=5` |
+| Timeline attack plays in a real fight with its own box size | `TL box=240x100 border=9777`, `CUSTOM bullets_seen=1 max=8`, `STATE VICTORY kills=1` |
+| Live-build screen: pick a bullet, place it, pick another, place it, change its angle, TEST IT, return, DONE | `LIVE add n=1`, `LIVE add n=2`, `LIVE store objects=2`, `LIVE lab objects=2 bullets=1`, `EXIT test=live`; clicks are fed to the screen's own pointer, not the real mouse |
+| The editor's 1280x960 screen opens and the window returns to 640x480 | `BIGWIN window=1280x960 surface=1280x960`, `BIGWIN back window=640x480` (run separately, not part of the suite) |
+| The launcher builds from its own verified copy when the Steam folder is modded | `Using the verified copy of the original game: ...\source` |
 | LOVE and starting HP reach the original battle | battle screenshot shows `LV 1`, `HP 01 / 20`; LV 20 run shows 99/99 |
 | Winning returns to the results screen | `STATE VICTORY kills=1 xp=3 gold=2 hp=29/36` (EXP and gold from original code) |
 | Losing plays the original game over and returns | `STATE DEFEAT hp=0` |
@@ -126,8 +132,19 @@ Consequences to be aware of:
   not recorded, so `ring` and `wall` in particular are unconfirmed. Losing to a custom
   boss, the Insult ACT, the Check text, fleeing, other box sizes, game sprites as the boss
   image and a boss with no speech lines were not exercised.
-- **Test flakiness.** In the last full run one scenario (`wasd`) failed on its first
-  attempt and passed on the automatic retry.
+- **Test flakiness.** In the last full run (18 of 18 passed) three scenarios failed their
+  first attempt and passed on the automatic retry: `wasd`, `editor` and `live`. Earlier
+  failures of this kind were traced to the game window losing focus while the PC was in
+  use; that was not confirmed for these three.
+- **The Battle Creator with real input.** Nobody has used the boss editor or the
+  live-build screen by hand. Typing text, dragging objects, turning them with the handle,
+  scrubbing the timeline, undo and redo, copy and delete, switching attacks, hitboxes,
+  pause and slow, the OBJECTS list and box-size steppers were not exercised by any test.
+- **How closely the live-build preview matches a real fight** was not measured; it uses
+  the same numbers but draws bullets itself.
+- **The Steam Undertale folder is now a modded install** (Undertale Together, installed
+  on 2026-11-16 at 19:00, not by this project). The suite checks it did not change during
+  a run, but it is no longer the original game; the simulator builds from `source\`.
 - **WASD with a real keyboard.** The tests press W/A/S/D through simulated keys. The
   helper may add up to one frame of input delay in WASD mode; this was not measured.
 - **Mouse support** in the menus, including clicking tabs.

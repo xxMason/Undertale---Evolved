@@ -1,3 +1,78 @@
+// ---- Attack lab: skip straight to this boss's attack turn, loop one attack forever,
+// never let the player die, and let the number keys retune the attack while it runs.
+if (global.ube_lab >= 0 && global.ube_cb_atk_n > 0)
+{
+    var lk = min(global.ube_lab, global.ube_cb_atk_n - 1);
+    lab_t += 1;
+    if (lab_t == 1)
+    {
+        global.hp = global.maxhp;
+    }
+    if (lab_started == 0 && lab_t > 8 && global.mnfight == 0 && global.myfight == 0)
+    {
+        with (OBJ_WRITER)
+        {
+            halt = 3;
+        }
+        global.mnfight = 1;
+        lab_started = 1;
+    }
+    if (global.hp < global.maxhp)
+    {
+        lab_hits += 1;
+        global.hp = global.maxhp;
+    }
+    if (global.mnfight == 2 && attacked == 1 && global.turntimer < 60)
+    {
+        global.turntimer = 600;
+    }
+    var ld;
+    if (keyboard_check_pressed(ord("1")))
+    {
+        var lp = 0;
+        var lq;
+        for (lq = 0; lq < 4; lq += 1)
+        {
+            if (ube_list_get(0, lq) == global.ube_cb_at_pat[lk])
+            {
+                lp = lq;
+            }
+        }
+        global.ube_cb_at_pat[lk] = ube_list_get(0, (lp + 1) mod 4);
+    }
+    ld = keyboard_check_pressed(ord("3")) - keyboard_check_pressed(ord("2"));
+    global.ube_cb_at_count[lk] = clamp(global.ube_cb_at_count[lk] + ld, 1, 40);
+    ld = keyboard_check_pressed(ord("5")) - keyboard_check_pressed(ord("4"));
+    global.ube_cb_at_speed[lk] = clamp(global.ube_cb_at_speed[lk] + (ld * 0.5), 0.5, 12);
+    ld = keyboard_check_pressed(ord("7")) - keyboard_check_pressed(ord("6"));
+    global.ube_cb_at_interval[lk] = clamp(global.ube_cb_at_interval[lk] + (ld * 2), 2, 300);
+    ld = keyboard_check_pressed(ord("9")) - keyboard_check_pressed(ord("8"));
+    global.ube_cb_at_dmg[lk] = clamp(global.ube_cb_at_dmg[lk] + ld, 1, 99);
+    if (keyboard_check_pressed(ord("0")))
+    {
+        var bn = ube_list_n(2);
+        var bp = 0;
+        var bq;
+        for (bq = 0; bq < bn; bq += 1)
+        {
+            if (ube_list_get(2, bq) == global.ube_cb_at_sprite[lk])
+            {
+                bp = bq;
+            }
+        }
+        global.ube_cb_at_sprite[lk] = ube_list_get(2, (bp + 1) mod bn);
+    }
+    if (keyboard_check_pressed(vk_backspace))
+    {
+        // Back to the editor; obj_ube_controller copies the tuned values into the boss.
+        ube_log("LAB exit count=" + string(global.ube_cb_at_count[lk]) + " hits=" + string(lab_hits));
+        caster_free(all);
+        global.ube_mus_on = 0;
+        room_goto(room_ube_menu);
+        exit;
+    }
+}
+
 // ---- Turn bookkeeping (same shape as obj_froggit's Step)
 if (global.mnfight == 3)
 {
@@ -85,19 +160,16 @@ if (global.mnfight == 2)
 {
     if (attacked == 0)
     {
-        cur = -1;
+        // The attack was picked in Alarm 6, when the box was shaped for it.
+        cur = next_cur;
         global.turntimer = 60;
-        if (global.ube_cb_atk_n > 0)
+        if (cur >= 0)
         {
-            if (global.ube_cb_order == 1)
-            {
-                cur = turn_n mod global.ube_cb_atk_n;
-            }
-            else
-            {
-                cur = floor(random(global.ube_cb_atk_n));
-            }
             global.turntimer = global.ube_cb_at_dur[cur];
+            if (global.ube_lab >= 0)
+            {
+                global.turntimer = 600;
+            }
         }
         atk_t = 0;
         turn_n += 1;
@@ -122,7 +194,94 @@ if (global.mnfight == 2)
     else if (cur >= 0 && instance_exists(obj_heart))
     {
         atk_t += 1;
-        if ((atk_t mod global.ube_cb_at_interval[cur]) == 1)
+        if (global.ube_cb_at_pat[cur] == "timeline")
+        {
+            // Timeline attack: every placed object fires at its own frame, and can
+            // repeat. Positions are measured from the centre of the box.
+            if (global.ube_lab >= 0 && atk_t > global.ube_cb_at_dur[cur])
+            {
+                atk_t = 1;
+            }
+            var tf = atk_t - 1;
+            var tcx = (global.idealborder[0] + global.idealborder[1]) / 2;
+            var tcy = (global.idealborder[2] + global.idealborder[3]) / 2;
+            var ti;
+            for (ti = 0; ti < global.ube_cb_at_objn[cur]; ti += 1)
+            {
+                var tk = (cur * 40) + ti;
+                var rel = tf - global.ube_cb_o_time[tk];
+                if (rel >= 0)
+                {
+                    if ((rel mod global.ube_cb_o_every[tk]) == 0 && (rel div global.ube_cb_o_every[tk]) < global.ube_cb_o_cnt[tk])
+                    {
+                        var ts = asset_get_index(global.ube_cb_o_spr[tk]);
+                        if (ts >= 0)
+                        {
+                            if (asset_get_type(global.ube_cb_o_spr[tk]) != asset_sprite)
+                            {
+                                ts = -1;
+                            }
+                        }
+                        if (ts < 0)
+                        {
+                            ts = spr_bulletmd;
+                        }
+                        var tx = tcx + global.ube_cb_o_x[tk];
+                        var ty = tcy + global.ube_cb_o_y[tk];
+                        var tb = instance_create(tx, ty, obj_ube_bullet);
+                        tb.sprite_index = ts;
+                        tb.dmg = global.ube_cb_o_dmg[tk];
+                        tb.speed = global.ube_cb_o_spd[tk];
+                        tb.direction = global.ube_cb_o_ang[tk];
+                        if (global.ube_cb_o_aim[tk] == 1)
+                        {
+                            tb.direction = point_direction(tx, ty, obj_heart.x + 8, obj_heart.y + 8);
+                        }
+                        tb.image_xscale = global.ube_cb_o_size[tk];
+                        tb.image_yscale = global.ube_cb_o_size[tk];
+                        tb.spin = global.ube_cb_o_spin[tk];
+                        if (global.ube_cb_o_face[tk] == 1)
+                        {
+                            tb.image_angle = tb.direction;
+                        }
+                        if (global.ube_test == "record" || global.ube_test == "record2")
+                        {
+                            var rfh = file_text_open_append("ube_record.txt");
+                            file_text_write_string(rfh, "SPAWN " + global.ube_cb_o_spr[tk] + ";" + string_format(tb.x, 0, 10) + ";" + string_format(tb.y, 0, 10) + ";" + string_format(tb.speed, 0, 10) + ";" + string_format(tb.direction, 0, 10) + ";" + string(tb.dmg) + ";" + string_format(tb.image_xscale, 0, 4));
+                            file_text_writeln(rfh);
+                            file_text_close(rfh);
+                        }                        if (global.ube_test == "verify")
+                        {
+                            // The live-build preview's rule: a bullet lasts until it
+                            // crosses a wall of the box that it is moving towards.
+                            var vvx = lengthdir_x(tb.speed, tb.direction);
+                            var vvy = lengthdir_y(tb.speed, tb.direction);
+                            var vlife = 100000;
+                            if (vvx > 0.001 && tx < global.idealborder[1] - 5)
+                            {
+                                vlife = min(vlife, ((global.idealborder[1] - 5) - tx) / vvx);
+                            }
+                            if (vvx < -0.001 && tx > global.idealborder[0] + 5)
+                            {
+                                vlife = min(vlife, ((global.idealborder[0] + 5) - tx) / vvx);
+                            }
+                            if (vvy > 0.001 && ty < global.idealborder[3] - 5)
+                            {
+                                vlife = min(vlife, ((global.idealborder[3] - 5) - ty) / vvy);
+                            }
+                            if (vvy < -0.001 && ty > global.idealborder[2] + 5)
+                            {
+                                vlife = min(vlife, ((global.idealborder[2] + 5) - ty) / vvy);
+                            }
+                            tb.vplife = vlife;
+                            tb.vaim = global.ube_cb_o_aim[tk];
+                            global.ube_v_spawned += 1;
+                        }
+                    }
+                }
+            }
+        }
+        else if ((atk_t mod global.ube_cb_at_interval[cur]) == 1)
         {
             var L = global.idealborder[0];
             var R = global.idealborder[1];

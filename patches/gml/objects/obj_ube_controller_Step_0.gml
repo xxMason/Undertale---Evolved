@@ -4,6 +4,48 @@ ptimer += 1;
 // ---- RETURNING_TO_MENU: wait for the original game-over object to finish, then clean up.
 if (page == 4)
 {
+    if (ptimer >= 3 && !instance_exists(obj_gameover) && global.ube_ed_return > 0)
+    {
+        // The fight was started from the Battle Creator editor: go back to it.
+        caster_free(all);
+        global.ube_mus_on = 0;
+        global.inbattle = 0;
+        global.border = 0;
+        global.ube_state = 0;
+        if (global.ube_ed_return == 2 && global.ube_ed_rlive == 0 && global.ube_lab >= 0 && global.ube_lab < global.ube_cb_atk_n)
+        {
+            // Keep what was tuned in the attack lab.
+            var lpre = "Attack" + string(global.ube_lab + 1) + "|";
+            ube_ed_set(lpre + "Pattern", global.ube_cb_at_pat[global.ube_lab]);
+            ube_ed_set(lpre + "Count", global.ube_cb_at_count[global.ube_lab]);
+            ube_ed_set(lpre + "Speed", global.ube_cb_at_speed[global.ube_lab]);
+            ube_ed_set(lpre + "Interval", global.ube_cb_at_interval[global.ube_lab]);
+            ube_ed_set(lpre + "Damage", global.ube_cb_at_dmg[global.ube_lab]);
+            ube_ed_set(lpre + "Bullet", global.ube_cb_at_sprite[global.ube_lab]);
+            ube_ed_save(global.ube_ed_file);
+        }
+        ube_log("EDITOR resume page=" + string(global.ube_ed_rpage));
+        if (global.ube_ed_rlive == 1)
+        {
+            // The test fight was started from the live-build screen: return there.
+            global.ube_ed_rlive = 0;
+            global.ube_ed_return = 0;
+            global.ube_lab = -1;
+            global.ube_live_idx = global.ube_ed_ridx;
+            room_goto(room_ube_editor);
+            exit;
+        }
+        global.ube_ed_return = 0;
+        global.ube_lab = -1;
+        global.ube_ed_resumed = 1;
+        page = 9;
+        ptimer = 0;
+        var ed = instance_create(0, 0, obj_ube_editor);
+        ed.epage = global.ube_ed_rpage;
+        ed.eidx = global.ube_ed_ridx;
+        ed.esel = global.ube_ed_rsel;
+        exit;
+    }
     if (ptimer >= 3 && !instance_exists(obj_gameover))
     {
         res_win = 1;
@@ -68,6 +110,12 @@ if (global.ube_mus_on == 0)
     global.ube_mus = caster_load("music/house1.ogg");
     caster_loop(global.ube_mus, 0.8, 1);
     global.ube_mus_on = 1;
+}
+
+// ---- Page 9: the Battle Creator editor (obj_ube_editor) has the screen.
+if (page == 9)
+{
+    exit;
 }
 
 // ---- Input
@@ -203,7 +251,8 @@ if (page == 8)
     row_y0 = 130;
     row_h = 34;
     vis = 7;
-    row_n = global.ube_cbl_count + 1;
+    // Bosses, then NEW BOSS, then BACK.
+    row_n = global.ube_cbl_count + 2;
     for (i = 0; i < row_n; i += 1)
     {
         row_on[i] = 1;
@@ -464,7 +513,52 @@ if (global.ube_test == "keys")
 {
     exit;
 }
-if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd")
+if (global.ube_test == "live")
+{
+    // Make a fresh boss with one empty timeline attack and open the live-build screen.
+    if (page == 0 && ptimer == 10 && global.ube_live_started == 0)
+    {
+        global.ube_live_started = 1;
+        var ln = 1;
+        while (file_exists("custom/boss_" + string(ln) + ".ini"))
+        {
+            ln += 1;
+        }
+        global.ube_ed_i = global.ube_cbl_count;
+        global.ube_ed_file = "boss_" + string(ln) + ".ini";
+        global.ube_cbl_file[global.ube_ed_i] = global.ube_ed_file;
+        global.ube_cbl_name[global.ube_ed_i] = "New Boss";
+        global.ube_cbl_count += 1;
+        ube_ed_load("");
+        ube_ed_set("Attack1|Pattern", "timeline");
+        ube_ed_set("Attack1|Duration", 240);
+        ube_ed_set("Attack1|BoxW", 160);
+        ube_ed_set("Attack1|BoxH", 135);
+        ube_ed_save(global.ube_ed_file);
+        ube_index_write();
+        global.ube_live_idx = 1;
+        room_goto(room_ube_editor);
+    }
+    exit;
+}
+if (global.ube_test == "bigwin")
+{
+    // Experiment: open the large editor room, come back, report sizes, quit.
+    if (ptimer == 10 && global.ube_bigwin_done == 0)
+    {
+        global.ube_bigwin_done = 1;
+        room_goto(room_ube_editor);
+    }
+    if (ptimer == 15 && global.ube_bigwin_done == 1)
+    {
+        ube_log("BIGWIN back window=" + string(window_get_width()) + "x" + string(window_get_height()) + " surface=" + string(surface_get_width(application_surface)) + "x" + string(surface_get_height(application_surface)));
+        screen_save("ube_shot_big_back.png");
+        ube_log("EXIT test=bigwin");
+        game_end();
+    }
+    exit;
+}
+if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd" && global.ube_test != "editor")
 {
     k_ok = 0;
     k_back = 0;
@@ -489,7 +583,7 @@ if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd
             }
             global.ube_lv = 20;
             global.ube_hp = 0;
-            if (global.ube_test == "custom" || global.ube_test == "custom_spare")
+            if (global.ube_test == "custom" || global.ube_test == "custom_spare" || global.ube_test == "timeline" || global.ube_test == "verify" || global.ube_test == "record" || global.ube_test == "record2")
             {
                 // First custom boss. "custom" kills it; "custom_spare" talks it down.
                 if (global.ube_cbl_count == 0)
@@ -498,7 +592,38 @@ if (global.ube_test != "" && global.ube_test != "ui" && global.ube_test != "wasd
                     game_end();
                     exit;
                 }
-                ube_start_encounter(1000);
+                if (global.ube_test == "record" || global.ube_test == "record2")
+                {
+                    // Level 1, full HP, record boss (installed last in the list).
+                    global.ube_lv = 1;
+                    global.ube_hp = 0;
+                    ube_start_encounter(1000 + (global.ube_cbl_count - 1));
+                    exit;
+                }
+                if (global.ube_test == "verify")
+                {
+                    // Attack lab on the verify boss (installed last): attack 1 loops, no dying.
+                    global.ube_lab_pending = 0;
+                    ube_start_encounter(1000 + (global.ube_cbl_count - 1));
+                    exit;
+                }
+                if (global.ube_test == "timeline")
+                {
+                    // The launcher installs the timeline test boss last in the list.
+                    ube_start_encounter(1000 + (global.ube_cbl_count - 1));
+                    exit;
+                }
+                // The example boss, wherever it is in the list (the player may have others).
+                var si = 0;
+                var sj;
+                for (sj = 0; sj < global.ube_cbl_count; sj += 1)
+                {
+                    if (global.ube_cbl_file[sj] == "sentinel.ini")
+                    {
+                        si = sj;
+                    }
+                }
+                ube_start_encounter(1000 + si);
                 exit;
             }
             if (global.ube_test == "train")
@@ -773,7 +898,7 @@ if (page == 2)
 
 if (page == 8)
 {
-    if (k_back || (k_ok && sel == global.ube_cbl_count))
+    if (k_back || (k_ok && sel == global.ube_cbl_count + 1))
     {
         snd_play(snd_select);
         page = 0;
@@ -781,7 +906,42 @@ if (page == 8)
         ptimer = 0;
         exit;
     }
-    if (k_ok)
+    var open_editor = -1;
+    if (sel < global.ube_cbl_count && control_check_pressed(2) && ptimer >= 4)
+    {
+        // [C] edits the selected boss.
+        open_editor = sel;
+        ube_ed_load(global.ube_cbl_file[sel]);
+    }
+    if (k_ok && sel == global.ube_cbl_count && global.ube_cbl_count < 30)
+    {
+        // NEW BOSS: first unused file name, default values, one starter attack.
+        var nn = 1;
+        while (file_exists("custom/boss_" + string(nn) + ".ini"))
+        {
+            nn += 1;
+        }
+        open_editor = global.ube_cbl_count;
+        global.ube_cbl_file[open_editor] = "boss_" + string(nn) + ".ini";
+        global.ube_cbl_name[open_editor] = "New Boss";
+        global.ube_cbl_count += 1;
+        ube_ed_load("");
+        ube_ed_set("Attack1|Pattern", "rain");
+        ube_ed_save(global.ube_cbl_file[open_editor]);
+        ube_index_write();
+    }
+    if (open_editor >= 0)
+    {
+        snd_play(snd_select);
+        global.ube_ed_i = open_editor;
+        global.ube_ed_file = global.ube_cbl_file[open_editor];
+        global.ube_ed_resumed = 0;
+        page = 9;
+        ptimer = 0;
+        instance_create(0, 0, obj_ube_editor);
+        exit;
+    }
+    if (k_ok && sel < global.ube_cbl_count)
     {
         snd_play(snd_select);
         // Custom bosses use encounter numbers from 1000 up.

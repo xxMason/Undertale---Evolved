@@ -32,6 +32,12 @@ SCR_GAMESTART();
 global.inbattle = 0;
 global.ube_last = idx;
 ube_apply_player();
+// Fights started by the Battle Creator editor (1 = TEST FIGHT, 2 = attack lab) return to
+// the editor instead of the results screen. Every other start clears this.
+global.ube_ed_return = global.ube_ed_pending;
+global.ube_lab = global.ube_lab_pending;
+global.ube_ed_pending = 0;
+global.ube_lab_pending = -1;
 var enc_id = "";
 if (idx >= 1000)
 {

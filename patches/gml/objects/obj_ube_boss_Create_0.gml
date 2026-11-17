@@ -60,8 +60,13 @@ dmgwriter = noone;
 blcon = noone;
 blconwd = noone;
 spare_points = 0;
+// Attack lab (editor's TEST LIVE): global.ube_lab is the attack being tuned, or -1.
+lab_t = 0;
+lab_started = 0;
+lab_hits = 0;
 turn_n = 0;
 cur = -1;
+next_cur = -1;
 atk_t = 0;
 wall_side = 0;
 // scr_mercystandard: mercy = HP - AT - weapon + DEF - mercymod, spareable when below 0.

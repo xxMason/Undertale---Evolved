@@ -1,7 +1,7 @@
-# Godot battle engine (original battle code)
+# Godot engine (original game code)
 
 `godot/engine.tscn` (the project's main scene) runs Undertale's **own battle code** inside
-Godot. Nothing about the fights is rewritten: every enemy, attack, SOUL mode, menu and
+Godot, and now the game itself from its first room (see "The game (overworld)"). Nothing about the fights is rewritten: every enemy, attack, SOUL mode, menu and
 text box is the game's decompiled GameMaker code, interpreted at runtime, using the
 sprites, sounds, fonts and music from the player's own copy. None of that is in Git.
 
@@ -23,8 +23,58 @@ game-over rooms, every sprite frame with its collision mask, backgrounds, fonts,
 paths and the music. About 190 MB; ignored by Git and by Godot's importer.
 
 Fight select: area tabs (RUINS ... BARRIER) with MONSTERS / BOSSES tabs (empty tabs are
-left out), arrows to move, Z to fight, C for Player Setup (LV 1-20, arrows or WASD; saved),
-F2 smooth rendering, F3 WASD, F4 fullscreen, Esc leaves a battle or quits.
+left out), arrows to move, Z to fight, C for Setup, F2 smooth rendering, F3 WASD,
+F4 fullscreen, Esc leaves a battle or quits.
+
+Setup (all saved):
+- LV 1-20
+- movement: arrows or WASD
+- smooth motion: frames drawn at the screen's own rate, blended between the game's 30
+  per second; the game logic always runs at 30
+- window size: 1x to 4x of 640x480
+- scaling: pixel-perfect whole multiples, or fill the window keeping 4:3
+- fullscreen
+
+The window can also be resized freely.
+
+Testing keys, anywhere in a battle:
+- F9: debug overlay. Every collision box (red: the SOUL, yellow: objects with collision
+  events, green: the rest), the frame, logic time, instance count, room, seed, HP,
+  invincibility, KARMA and battle state. Hover over something to see each instance under
+  the mouse: object, id, position, depth, sprite, frame and running alarms.
+- F10: pause. F11 then advances one game frame at a time.
+- F12: bug report. See "Bug reports and replays" below.
+- F5: the debug menu (see below).
+
+### Debug menu (F5)
+
+`godot/debug_menu.gd`, in the game and in battles. While it is open the game keeps running
+but gets no keys; Space pauses and resumes, PageUp/PageDown change tab, Esc or F5 closes,
+and `<>` moves the panel to the other side. Mouse and keyboard both work.
+
+| Tab | What it does |
+|---|---|
+| Player | name, LV (sets EXP, max HP, AT and DF to match, as the game's level-up does), HP, max HP, AT, DF, EXP, gold, kills |
+| Items | the 8 item slots, weapon and armour (equipped with the game's `scr_weaponeq` / `scr_armoreq`), 4 phone slots |
+| Story | `plot`, any `global.flag[N]`, and values to keep on screen (`plot, flag.202, obj_toroverworld3.x`) |
+| Warp | story points the walkthrough plays from (room and plot set to match); any room by name; click to move the player |
+| Battle | start any battle group where you stand (as an encounter); no damage (`global.invc`); keep HP full; monsters to 1 HP; make spareable (`mercymod`) |
+| World | game speed x0.25 to x8; walk through walls (the game's own `global.phasing`, walls not solid); no random encounters / encounter now, with the step counter; monsters left per area for genocide (`flag[202..205]` against 20, 16, 18, 40); auto-advance text; FUN (`flag[5]`); reseed the random generator |
+| Saves | the game's own save (`scr_save`); 3 quick save slots of the exact moment (every instance, globals, room, kept rooms, random generator; not the music); undo everything since the menu opened; open the save folder |
+| Inspect | click an object in the game (or pick one from the list): its variables, alarms, box and the last events it ran, live; set any variable |
+
+Cheats (no damage, keep HP, walls, encounters, auto text, speed) are off at every start.
+Everything changed is listed in the Story tab and in F12 reports; saves written after a
+change get `<save>.debug` next to them (file0.debug...) listing what was changed, so the
+save itself stays in Undertale's format.
+
+Tests: `--debugtest F` uses each part once at game frame F and prints `DEBUGTEST ok/FAIL`
+lines; `--debugtest2 F` checks the battle cheats; `--debugkeys F` (windowed) sends real
+F5, Space, Esc, arrow and mouse events; `--debugopen F [TAB]` opens it for screenshots.
+
+Data folder: `%APPDATA%\UltimateBattleEngine` (settings, `reports\`, `mods\`). It is
+separate from Undertale's own save folder, which the engine never writes. Settings from
+builds that used the old "UBE Battle Prototype" folder are picked up once.
 
 Mouse: everything in the fight select is clickable (tabs, rows, the Player Setup button,
 LV arrows, the movement toggle); hovering a row selects it, the wheel scrolls, right-click
@@ -32,6 +82,79 @@ closes Player Setup. In battle, hovering FIGHT / ACT / ITEM / MERCY selects that
 left-click is Z, right-click is X and the wheel is Up/Down, so every submenu works with
 the mouse. The clicks are fed to the game's own menu code as key presses, so nothing about
 the battle menus is reimplemented.
+
+## The game (overworld)
+
+G on the fight select (or `--game`) starts **Undertale itself** from its first room:
+intro story, title menu, naming, Flowey, Toriel, the Ruins. As with battles, nothing is
+rewritten. Rooms, tiles, backgrounds, views and objects come from `data.win`, and every
+cutscene, puzzle and NPC is the game's own code.
+
+What the engine adds for this (in `gml_vm.gd` / `gml_builtins.gd`):
+- **Rooms.** `vm.load_room` follows GameMaker 1.4's order:
+  1. Room End;
+  2. keep or drop the old room's instances;
+  3. place every instance, then run each one's Create and creation code;
+  4. Game Start (first room only), the room's creation code, then Room Start.
+  A room with `room_persistent` set (Undertale sets it before most battles) is kept as it
+  was, alarms included, and comes back without Create events.
+- **Views.** Undertale's 320x240 view is drawn at 2x into the 640x480 window. A view
+  follows its object with GameMaker's border and speed rules and stays inside the room.
+  With smooth motion on, the camera is smoothed between game frames like everything else.
+- **Backgrounds and tiles.** The background colour and the back layers come first. Tiles
+  are drawn between the instances by depth, and the front layers last. Layers scroll by
+  their speeds. `tile_layer_shift/hide/show/delete`, `tile_add` and `tile_delete` work.
+- **Save files.** `ini_*` and `file_text_*` work for real in game mode, inside
+  `%APPDATA%\UltimateBattleEngine\undertale\`. Only the file name the game asks for is
+  used (any folder part is dropped), so nothing is written anywhere else. Undertale's own
+  saves in `%LOCALAPPDATA%\UNDERTALE` are never read or written. Battles started from the
+  fight select still see no save files at all, so their traces don't change.
+  Deleting that folder starts the game from scratch; Flowey remembers otherwise, as in the
+  real game.
+
+Testing options:
+- `--room NAME`: boot, then go straight to a room.
+- `--press "F:K[xN],..."`: key K held from frame F for N frames.
+- `--gameshot "F,F" DIR`: screenshots.
+- `--seed N`: fixed random seed; the clock then runs on game frames, so a run repeats
+  exactly.
+- `--savedir DIR`: a separate save folder, emptied first.
+- `--unknown`: print missing functions.
+- `--dumpinst`: list objects when stopping.
+- `--frames N`: stop after N frames.
+- `--bot FILE`: play a walkthrough script with `godot/game_bot.gd` (`--botexit` stops
+  when it ends). The commands are listed at the top of that file:
+  - waits on story conditions (`plot>=5`, `room=`, `exists=`, `notext`, `OBJ.VAR=N`...);
+  - `path X Y` walks around walls, planning through the room's solid objects (precise
+    masks such as Toriel's stairs are tested by their pixels) and around holes, unless
+    the target is in one;
+  - `use OBJ` walks up to an object from whichever side it can reach, faces it and talks
+    until the text is gone, and fails if nothing was said;
+  - `push OBJ DIR COND`, `roam DIRS COND` (walk with keys held, e.g. into an encounter),
+    `canmove DIR`, `choose 0|1` (answer for choice boxes), `talk`, `face`, `expect`,
+    `shot`, `where`, `near`, `show`;
+  - `battle fight|spare|flee|act:N|acts:N`. `act:N` uses the sparing ACT of monsters it
+    knows (Loox: Don't Pick On, Vegetoid: Dinner, then it eats the green carrots).
+  `tests/walkthrough_ruins.txt` plays from the first room through the Ruins, Toriel's
+  house and fight, to Snowdin's first room, and checks the story state in each room; a
+  broken cutscene or puzzle stops it there. `tests/stress_ruins.txt` starts random
+  encounters while walking (and mashing Z) and reads a save point mid-walk, checking that
+  the player can still move after each.
+- `--watch`: every 10 frames, print where Toriel and the player are, with sprite,
+  direction and path position.
+
+Headless game runs go as fast as possible (the whole Ruins walkthrough, about 31800
+frames, takes about a minute and a half).
+
+F9 shows collision boxes and plot/interact/entrance in the overworld too. F10/F11 pause
+and step. F12 saves a screenshot, the room and position, and a copy of the save files.
+Overworld replays aren't done yet.
+
+Not done yet:
+- the overworld isn't compared frame by frame with the real game (the battles are);
+- 30 fps only;
+- `game_restart` returns to the fight select;
+- areas beyond the Ruins are untested.
 
 ## The roster
 
@@ -67,7 +190,8 @@ Frame order follows GameMaker 1.4, as measured against the real game (see "Match
 real game" below): `xprevious`/`yprevious` saved, Begin Step, animation (image_index and
 Animation End), alarms (alarm 0 for everyone, then alarm 1, ...), keyboard / key press /
 key release, Step, motion (friction, gravity, path, speed), Outside Room, collisions
-(inherited from parent objects), End Step, Draw (depth list), Draw GUI. Every event except
+(inherited from parent objects, each instance's targets in ascending object order), End
+Step, Draw (depth list), Draw GUI. Every event except
 Draw runs object by object in object order, each object's instances in creation order.
 
 Runner details that change outcomes, all measured:
@@ -103,6 +227,8 @@ Runner details that change outcomes, all measured:
 - At room start every placed instance exists before any Create event or creation code runs.
 - The view position (`view_xview`/`view_yview`) offsets drawing: screen shake.
 - `merge_colour` rounds each channel.
+- Collision events run in ascending target-object order: a Moldbygg bullet touching the
+  SOUL and the top border on the same frame hits the SOUL before the border removes it.
 - The random number generator is GameMaker's WELL512a with its seeding and scaling.
 
 Drawing details, measured with `patches/gml/scripts/ube_draw_probe.gml` (logged as `DRAW ...`
@@ -125,7 +251,12 @@ Godot with the exact keys the real game saw, then compares every frame: HP, karm
 invincibility, the SOUL's position, battle state, object count and a checksum of every
 battle object's position. `-Watch NAME` (or `*`) also compares one object's positions and
 frames (with hspeed, vspeed and direction to 9 decimals), `-Reuse` reuses the last real
-trace, `-RealTrace FILE` compares against a saved one. Traces are numbers only.
+trace, `-RealTrace FILE` compares against a saved one. Traces are numbers only. Any
+battle group number works, not just the roster's (a group with no roster entry runs as
+"Group N" with the game's own setup for it).
+`scripts/shots-all.ps1 [-Groups 2,4] [-Frames 900] [-Reuse]` runs `-Shots` for every group
+that has a saved real trace and writes one line per group (identical frames, worst frame)
+to `logs/trace/shots_summary.txt`.
 `-Shots` saves a screenshot every 50 frames in both (the Godot side runs in a window) and
 compares them pixel by pixel with `scripts/shot-compare.ps1`; images and red-marked
 `diff_F.png` files stay in `logs/trace/shots_gN/` (git-ignored). Godot's own
@@ -171,7 +302,56 @@ went from 25-60 ms frames to under 20 ms, and Knight Knight's collision time ove
 from 1.7 s to 0.45 s. Smooth rendering decides how to blend each instance once per game
 frame, not on every rendered frame.
 
+Later passes: event passes skip objects with no handler for the event, the depth list
+inserts by binary search, unscaled sprites draw directly, and the translator handles
+`x++;` statements (the text writer used to fall back to the interpreter: 7 ms a frame,
+now 0.5 ms). Dust frames are now about 9-15 ms. To look for hitches on screen:
+`--battle 0 --hitchlog` prints every displayed frame over 25 ms (`HITCH frame dt logic
+draw inst ops`), and `--prof --spikes` prints the top phases of any game frame over 8 ms.
+
+## Bug reports and replays
+
+Every fight played on screen is recorded: the battle, the player's LV, the random seed
+and the keys held on every game frame (mouse clicks are recorded as the keys they press).
+While recording, the game's clock (`current_time`, `get_timer`) counts game frames
+instead of real time. The fight is then fully deterministic and replays exactly.
+
+F12 (in battle, or on the result screen afterwards) saves
+`%APPDATA%\UltimateBattleEngine\reports\<date-time>\` with three files:
+- `replay.json`: the recording, plus a fingerprint of the state at that moment (frame,
+  HP, turn, object count, position sums, room);
+- `screenshot.png`;
+- `summary.txt`: what was going on, with room to describe the bug.
+
+```
+godot --path godot -- --playback "...\replay.json"
+```
+
+plays it back on screen. Esc leaves; when the recording runs out you take over the
+controls. With `--headless` (or `--fast`) it runs as fast as possible, checks the
+fingerprint at the report's frame, prints `PLAYBACK CHECK ... MATCH` or `DIFF` and exits
+0 or 1. Any reported bug can be kept as a test this way. `--reportat F DIR` saves a
+report at frame F, for tests. The format is in `godot/fight_replay.gd`.
+
 ## Testing
+
+`scripts/check.ps1` is the quick regression check (about 45 s, never starts the real
+game). It runs:
+- the four frame-by-frame traces kept in `tests/`;
+- the collision probe;
+- a bug-report replay;
+- the mod manifest fixtures;
+- the Ruins walkthrough (`tests/walkthrough_ruins.txt`), from the first room to Snowdin's
+  first room, checked to end in `room_tundra1` with plot 30 and a written `file0`;
+- the overworld stress script (`tests/stress_ruins.txt`).
+- the debug menu's self-test (`--debugtest`, `--debugtest2`).
+
+`run-tests.ps1` also loads all 35 Ruins rooms one by one and fails on any missing
+function or script warning.
+
+`-Full` adds every saved real-game trace in `logs/trace` (51 battles, about 20 minutes).
+`scripts/install-hooks.ps1` makes Git run the quick check before every commit
+(`-Remove` takes it out again).
 
 ```
 godot --headless --path godot -- --lv 20 --sweep 0 47
@@ -188,3 +368,20 @@ compared run for run. `--battle N --shots DIR` plays one
 battle on screen and saves screenshots during attacks.
 
 See `TEST_REPORT.md` for the latest results.
+
+## Tester builds and updates
+
+`scripts\make-tester-zip.ps1` builds `UltimateBattleEngine-tester-<version>.zip` from
+every file Git tracks or would track (so nothing `.gitignore` leaves out: no Undertale
+data, tools or logs), under an `UltimateBattleEngine\` folder, with `MANIFEST.txt`
+listing the files. It refuses to pack game or program files. Bump `VERSION` in
+`godot/engine_info.gd` for each build sent out.
+
+Testers update with `update.bat` (`scripts\update.ps1`): drag the zip onto it, or run
+it bare to use the newest tester zip in the folder, its parent or Downloads. It checks
+the zip is a tester build, refuses an older version, writes only the engine's own files
+(never `source`, `godot\extracted`, `tools`, `logs`, `config\settings.json` or
+`config\godot_path.txt`), copies every file it replaces to `backup\<old version>_<date>\`,
+and removes files the old `MANIFEST.txt` listed that the new build no longer has.
+`play.bat` re-runs setup by itself when the extracted data is missing or older than the
+engine expects (`extract_version` in `engine.json`).

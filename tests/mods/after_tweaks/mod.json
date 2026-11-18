@@ -1,0 +1,1 @@
+{"format": 1, "id": "tester.after_tweaks", "name": "After Tweaks", "version": "0.2", "engine": "^0.3", "requires": ["tester.base_tweaks"], "description": "Fixture: must load after base_tweaks although it sorts first."}

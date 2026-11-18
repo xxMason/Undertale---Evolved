@@ -34,7 +34,9 @@ foreach (var code in Data.Code)
 }
 File.WriteAllText(Path.Combine(outDir, "code_failures.txt"), bad.ToString());
 
-var meta = new StringBuilder("{\n");
+// Bump when the output changes in a way the engine depends on (play.bat asks for a fresh
+// setup when godot/extracted is older). 2: backgrounds padded to their full size.
+var meta = new StringBuilder("{\n\"extract_version\": 2,\n");
 
 // ---- Asset index tables (for asset_get_index and numeric references).
 void Table(string key, IEnumerable<UndertaleNamedResource> items)
@@ -70,16 +72,30 @@ for (int i = 0; i < Data.GameObjects.Count; i++)
 }
 meta.Append("],\n");
 
-// ---- Rooms the battle uses: size, speed, creation code, instances.
+// ---- Rooms: every room, in full. Instances: [object, x, y, xscale, yscale, id, creation
+// code, rotation, colour]. Backgrounds (8): [visible, foreground, background, x, y, tile h,
+// tile v, hspeed, vspeed, stretch]. Views (8): [visible, xview, yview, wview, hview, xport,
+// yport, wport, hport, hborder, vborder, hspeed, vspeed, object]. Tiles: [background, x, y,
+// left, top, width, height, depth, id, xscale, yscale, colour].
+string F(float f) => f.ToString(System.Globalization.CultureInfo.InvariantCulture);
+meta.Append("\"room_order\": [" + string.Join(",", Data.GeneralInfo.RoomOrder.Select(ro => J(ro.Resource.Name.Content))) + "],\n");
 meta.Append("\"rooms\": {\n");
-string[] rooms = { "room_battle", "room_gameover" };
-for (int ri = 0; ri < rooms.Length; ri++)
+bool firstRoom = true;
+foreach (var r in Data.Rooms)
 {
-    var r = Data.Rooms.ByName(rooms[ri]);
-    var inst = r.GameObjects.Select(g => $"[{J(g.ObjectDefinition?.Name?.Content)},{g.X},{g.Y},{g.ScaleX},{g.ScaleY},{g.InstanceID},{(g.CreationCode == null ? "null" : J(g.CreationCode.Name.Content))}]");
-    meta.Append($"  {J(rooms[ri])}: {{\"width\":{r.Width},\"height\":{r.Height},\"speed\":{r.Speed},\"code\":{(r.CreationCodeId == null ? "null" : J(r.CreationCodeId.Name.Content))},\"instances\":[{string.Join(",", inst)}]}}" + (ri < rooms.Length - 1 ? ",\n" : "\n"));
+    if (r == null) continue;
+    var inst = r.GameObjects.Select(g => $"[{J(g.ObjectDefinition?.Name?.Content)},{g.X},{g.Y},{F(g.ScaleX)},{F(g.ScaleY)},{g.InstanceID},{(g.CreationCode == null ? "null" : J(g.CreationCode.Name.Content))},{F(g.Rotation)},{g.Color}]");
+    var bgs = r.Backgrounds.Select(b => $"[{(b.Enabled ? 1 : 0)},{(b.Foreground ? 1 : 0)},{N(b.BackgroundDefinition)},{b.X},{b.Y},{(b.TiledHorizontally ? 1 : 0)},{(b.TiledVertically ? 1 : 0)},{b.SpeedX},{b.SpeedY},{(b.Stretch ? 1 : 0)}]");
+    var views = r.Views.Select(v => $"[{(v.Enabled ? 1 : 0)},{v.ViewX},{v.ViewY},{v.ViewWidth},{v.ViewHeight},{v.PortX},{v.PortY},{v.PortWidth},{v.PortHeight},{v.BorderX},{v.BorderY},{v.SpeedX},{v.SpeedY},{N(v.ObjectId)}]");
+    var tiles = r.Tiles.Select(t => $"[{N(t.BackgroundDefinition)},{t.X},{t.Y},{t.SourceX},{t.SourceY},{t.Width},{t.Height},{t.TileDepth},{t.InstanceID},{F(t.ScaleX)},{F(t.ScaleY)},{t.Color}]");
+    bool viewsOn = r.Flags.HasFlag(UndertaleRoom.RoomEntryFlags.EnableViews);
+    meta.Append((firstRoom ? "" : ",\n") + $"  {J(r.Name.Content)}: {{\"width\":{r.Width},\"height\":{r.Height},\"speed\":{r.Speed},\"persistent\":{(r.Persistent ? 1 : 0)}," +
+        $"\"colour\":{r.BackgroundColor},\"show_colour\":{(r.DrawBackgroundColor ? 1 : 0)},\"views_enabled\":{(viewsOn ? 1 : 0)}," +
+        $"\"code\":{(r.CreationCodeId == null ? "null" : J(r.CreationCodeId.Name.Content))},\"instances\":[{string.Join(",", inst)}]," +
+        $"\"backgrounds\":[{string.Join(",", bgs)}],\"views\":[{string.Join(",", views)}],\"tiles\":[{string.Join(",", tiles)}]}}");
+    firstRoom = false;
 }
-meta.Append("},\n");
+meta.Append("\n},\n");
 
 using (var worker = new TextureWorker())
 {
@@ -121,7 +137,9 @@ using (var worker = new TextureWorker())
     foreach (var bg in Data.Backgrounds)
     {
         if (bg?.Texture == null) continue;
-        worker.ExportAsPNG(bg.Texture, Path.Combine(bgDir, bg.Name.Content + ".png"));
+        // Padded to the full size: trimmed backgrounds keep their place (tiles and tiled
+        // backgrounds use coordinates in the untrimmed image).
+        worker.ExportAsPNG(bg.Texture, Path.Combine(bgDir, bg.Name.Content + ".png"), null, true);
         meta.Append((first ? "" : ",") + $"{J(bg.Name.Content)}:[{bg.Texture.BoundingWidth},{bg.Texture.BoundingHeight}]");
         first = false;
     }

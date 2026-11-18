@@ -5,6 +5,8 @@
 # monsters and attacks) -> result -> back to the list.
 # Controls in battle are Undertale's (arrows, Z, X, C). F3 toggles WASD, F4 fullscreen,
 # Esc leaves a battle (or quits from the list).
+# Testing keys: F9 debug overlay, F10 pause, F11 one frame while paused, F12 bug report
+# (a replay of the fight so far, a screenshot and a summary; --playback FILE replays one).
 #
 # Self-test: --battle <index> runs one encounter with scripted input and prints a report;
 # --shots <folder> saves screenshots while doing so.
@@ -14,6 +16,12 @@ const VM = preload("res://gml/gml_vm.gd")
 const Builtins = preload("res://gml/gml_builtins.gd")
 const Keys = preload("res://gml/gml_keys.gd")
 const Recorder = preload("res://gml/gml_recorder.gd")
+const FightReplay = preload("res://fight_replay.gd")
+const Info = preload("res://engine_info.gd")
+const Settings = preload("res://engine_save.gd")
+const ModLoader = preload("res://mod_loader.gd")
+const GameBot = preload("res://game_bot.gd")
+const DebugMenu = preload("res://debug_menu.gd")
 
 const RETURN_ROOM := 9999   # global.currentroom: going here means the battle is over
 
@@ -76,7 +84,7 @@ const BOSSES := ["Napstablook", "Toriel", "Papyrus", "Mad Dummy", "Glad Dummy", 
 	"Sans", "Asgore", "Asriel Dreemurr"]
 const AREAS := ["RUINS", "SNOWDIN", "WATERFALL", "HOTLAND", "CORE", "JUDGEMENT HALL", "BARRIER"]
 
-enum Screen { LIST, BATTLE, RESULT, ERROR }
+enum Screen { LIST, BATTLE, RESULT, ERROR, GAME }
 
 var vm
 var bi
@@ -110,6 +118,8 @@ var trace_seed := -1
 var trace_replay = null        # frame -> key bits seen by the real game, or null for auto-play
 var trace_lines: PackedStringArray = []
 var trace_watch := ""          # object whose instances get a W line every frame
+const TRACE_ONLY := -2         # start_battle index for a traced group not in ROSTER
+var trace_entry: Array = []
 
 # self-test
 var auto_index := -1
@@ -117,6 +127,30 @@ var auto_frames := 0
 var tracing := false   # a --gmtrace run drives the frames itself
 var shots_dir := ""
 var shots_taken := 0
+
+# Bug reports and replays (fight_replay.gd).
+var recording = null           # FightReplay of the current fight, kept after it ends for F12
+var playback = null            # FightReplay being played back (--playback FILE)
+var playback_checked := false
+var report_at := -1            # --reportat F DIR: save a report at frame F (tests)
+var report_dir := ""
+var toast := ""
+var toast_until := 0
+# Debugging.
+var overlay := false
+var paused := false
+var step_once := false
+var last_logic_us := 0
+# Display options (saved in settings).
+var window_scale := 2
+var pixel_perfect := true
+var fullscreen := false
+var mods: Dictionary = {}      # mod_loader.gd result
+var debug = null               # the debug menu (F5, debug_menu.gd)
+var debug_used: Array = []     # what was changed with it, for saves and bug reports
+var game_speed := 1.0          # debug menu: game frames per physics tick
+var _speed_acc := 0.0
+var settings: Dictionary = {}
 
 
 func _ready() -> void:
@@ -137,16 +171,43 @@ func _ready() -> void:
 	keys = Keys.new()
 	bi.keys = keys
 	bi.audio_root = self
-	var cfg := ConfigFile.new()
-	if cfg.load("user://settings.cfg") == OK:
-		wasd = bool(cfg.get_value("input", "wasd", false))
-		lv = clampi(int(cfg.get_value("player", "lv", 1)), 1, 20)
+	settings = Settings.load_settings()
+	wasd = bool(settings["input/wasd"])
+	lv = clampi(int(settings["player/lv"]), 1, 20)
+	smooth = bool(settings["display/smooth"])
+	window_scale = clampi(int(settings["display/window_scale"]), 1, 4)
+	pixel_perfect = bool(settings["display/pixel_perfect"])
+	fullscreen = bool(settings["display/fullscreen"])
+	overlay = bool(settings["debug/overlay"])
+	if args.has("--overlay"):
+		overlay = true
 	keys.wasd = wasd
+	if DisplayServer.get_name() != "headless" and not args.has("--shotsdir") and menushot == "" and shots_dir == "":
+		_apply_display(true)
+	# Mods: found and checked at start-up (they don't change anything yet; docs/MODDING.md).
+	var mdirs: Array = ModLoader.DEFAULT_DIRS.duplicate()
+	i = args.find("--modsdir")
+	if i >= 0 and i + 1 < args.size():
+		mdirs = [args[i + 1]]
+	mods = ModLoader.scan(mdirs)
+	if args.has("--mods"):
+		for m in mods["mods"]:
+			print("MOD %s %s (%s)" % [m["id"], m["version"], m["name"]])
+		for d in mods["disabled"]:
+			print("MOD DISABLED %s" % d)
+		for pr in mods["problems"]:
+			print("MOD PROBLEM %s" % pr)
+		print("MODS loaded=%d problems=%d" % [mods["mods"].size(), mods["problems"].size()])
+		get_tree().quit()
+		return
 	# The English text table is built once and kept between battles.
 	vm.globals["language"] = "en"
 	var boot = vm.instance_create(0, 0, vm.obj_index["obj_time"], false)
 	vm.call_script("textdata_en", [], {"self": boot, "other": boot, "locals": {}, "args": []})
 	text_map = vm.globals.get("text_data_en", -1.0)
+	debug = DebugMenu.new()
+	add_child(debug)
+	debug.setup(self)
 	i = args.find("--frames")
 	if i >= 0 and i + 1 < args.size():
 		frame_cap = int(args[i + 1])
@@ -195,8 +256,48 @@ func _ready() -> void:
 		tab_area = int(args[i + 1])
 		tab_kind = int(args[i + 2])
 	setup_open = args.has("--setup")
+	i = args.find("--reportat")
+	if i >= 0 and i + 2 < args.size():
+		report_at = int(args[i + 1])
+		report_dir = args[i + 2]
+	i = args.find("--playback")
+	if i >= 0 and i + 1 < args.size():
+		var rp = FightReplay.new()
+		var why: String = rp.load_file(args[i + 1])
+		if why != "":
+			print("PLAYBACK error: " + why)
+			get_tree().quit(2)
+			return
+		await _start_playback(rp, DisplayServer.get_name() == "headless" or args.has("--fast"))
+		return
 	if auto_index >= 0:
 		start_battle(auto_index)
+	elif args.has("--game"):
+		start_game()
+		if DisplayServer.get_name() == "headless":
+			# Tests: as fast as possible, not at 30 frames a second.
+			while screen == Screen.GAME and frames < frame_cap:
+				_game_frame()
+			if screen != Screen.GAME:
+				get_tree().quit()
+
+
+# The debug menu's view of the engine.
+func in_play() -> bool:
+	return screen == Screen.GAME or screen == Screen.BATTLE
+
+
+func is_game() -> bool:
+	return screen == Screen.GAME
+
+
+func in_battle_room() -> bool:
+	return vm.room >= 0 and (vm.room_names[vm.room] == "room_battle" or vm.room_names[vm.room] == "room_floweybattle")
+
+
+func debug_note(what: String) -> void:
+	debug_used.append("f%d %s: %s" % [frames, vm.room_names[vm.room] if vm.room >= 0 else "-", what])
+	vm.vlog("DEBUG " + what)
 
 
 # ---------------------------------------------------------------- battle set-up
@@ -222,6 +323,7 @@ func _reset_runtime() -> void:
 	vm.room = -1
 	vm.pending_room = -1
 	vm.game_end_requested = false
+	vm.game_restart_requested = false
 	var keep_text = bi.maps.get(int(text_map))
 	bi.maps.clear()
 	bi.lists.clear()
@@ -234,11 +336,300 @@ func _reset_runtime() -> void:
 	bi.draw_font = -1
 	bi.halign = 0
 	bi.valign = 0
+	# Room state: battles never touch save files and never run Game Start.
+	bi.room_state_reset()
+	bi.room_persist.clear()
+	bi.save_dir = ""
+	bi.ini_data = {}
+	bi.ini_path = ""
+	bi.text_files.clear()
+	vm.room_snapshots.clear()
+	vm.game_started = true
+	rec.view_scale = Vector2.ONE
+
+
+# ---------------------------------------------------------------- the game (overworld)
+
+# Undertale itself, from its first room. Its save files (file0, undertale.ini...) live in
+# the engine's data folder (%APPDATA%/UltimateBattleEngine/undertale), never the real ones.
+func start_game() -> void:
+	_reset_runtime()
+	vm.globals.clear()
+	var args := OS.get_cmdline_user_args()
+	bi.save_dir = ProjectSettings.globalize_path("user://undertale")
+	var sd := args.find("--savedir")
+	if sd >= 0 and sd + 1 < args.size():
+		# Tests: a folder of their own, emptied first, so runs never see each other's saves.
+		bi.save_dir = args[sd + 1]
+		DirAccess.make_dir_recursive_absolute(bi.save_dir)
+		for fn in DirAccess.get_files_at(bi.save_dir):
+			DirAccess.remove_absolute(bi.save_dir.path_join(fn))
+	vm.game_started = false
+	var gs := args.find("--seed")
+	bi.rng.set_seed(int(args[gs + 1]) if gs >= 0 and gs + 1 < args.size() else (randi() & 0x7FFFFFFF))
+	game_clock = gs >= 0
+	bi.clock_ms = 0.0 if game_clock else -1.0
+	recording = null
+	paused = false
+	frames = 0
+	rec.clear()
+	screen = Screen.GAME
+	var order: Array = vm.meta.get("room_order", [])
+	var first := int(vm.consts.get(String(order[0]), 0.0)) if not order.is_empty() else 0
+	var bf := args.find("--bot")
+	if bf >= 0 and bf + 1 < args.size():
+		bot = GameBot.new()
+		bot.eng = self
+		bot.vm = vm
+		bot.bi = bi
+		var why: String = bot.load_file(args[bf + 1])
+		if why != "":
+			print("BOT error: " + why)
+			bot = null
+	vm.load_room(first)
+	# --room NAME (testing): boot normally; once the boot leaves its first room, go straight
+	# to that room instead (see _game_jump).
+	var r := OS.get_cmdline_user_args().find("--room")
+	_jump_to = int(vm.consts.get(OS.get_cmdline_user_args()[r + 1], -1.0)) if r >= 0 and r + 1 < OS.get_cmdline_user_args().size() else -1
+	vm.vlog("GAME start in %s" % vm.room_names[first])
+
+
+var _game_room_seen := -1
+var _bot_exit := false
+var game_clock := false    # --seed: the clock runs on game frames too, so a run repeats exactly
+var _game_press = null     # --press "F:K[xN],...": key K held from frame F for N frames (testing)
+var _game_shots := {}      # --gameshot "F,F,..." DIR: screenshots at those frames
+
+
+var bot = null    # --bot FILE: a walkthrough script plays the game (game_bot.gd)
+
+
+func bot_shot(name: String) -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var dir := "user://botshots"
+	var i := OS.get_cmdline_user_args().find("--shotsdir")
+	if i >= 0 and i + 1 < OS.get_cmdline_user_args().size():
+		dir = OS.get_cmdline_user_args()[i + 1]
+	_game_shots[frames] = dir
+	_bot_shot_names[frames] = name
+
+
+var _bot_shot_names := {}
+
+
+func _game_auto_keys():
+	if _game_press == null:
+		var args := OS.get_cmdline_user_args()
+		var i := args.find("--press")
+		_game_press = []
+		if i >= 0 and i + 1 < args.size():
+			for part in args[i + 1].split(",", false):
+				var fk := part.split(":")
+				var kn := fk[1].split("x")
+				_game_press.append([int(fk[0]), int(kn[0]), int(kn[1]) if kn.size() > 1 else 1])
+		i = args.find("--gameshot")
+		if i >= 0 and i + 2 < args.size():
+			for f in args[i + 1].split(",", false):
+				_game_shots[int(f)] = args[i + 2]
+	if bot != null:
+		var k: Array = bot.keys()
+		if bot.done:
+			print("BOT %s at frame %d in %s" % ["FAILED" if bot.failed != "" else "FINISHED", frames, vm.room_names[vm.room]])
+			if DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--botexit"):
+				_bot_exit = true
+		return k
+	if _game_press.is_empty():
+		return null
+	var held: Array = []
+	for p in _game_press:
+		if frames >= p[0] and frames < p[0] + p[2]:
+			held.append(p[1])
+	return held
+
+
+func _game_shot_check() -> void:
+	if _game_shots.has(frames):
+		var dir: String = _game_shots[frames]
+		var f := frames
+		await RenderingServer.frame_post_draw
+		DirAccess.make_dir_recursive_absolute(dir)
+		var nm: String = _bot_shot_names.get(f, vm.room_names[vm.room])
+		get_viewport().get_texture().get_image().save_png(dir.path_join("f%05d_%s.png" % [f, nm]))
+
+
+var _jump_to := -1
+
+
+func _game_jump() -> void:
+	vm.pending_room = -1
+	vm.globals["interact"] = 0.0
+	# --set "plot=5,flag.10=1" (testing): story state for the room.
+	var st := OS.get_cmdline_user_args().find("--set")
+	if st >= 0 and st + 1 < OS.get_cmdline_user_args().size():
+		for kv in OS.get_cmdline_user_args()[st + 1].split(",", false):
+			var p := kv.split("=")
+			if p[0].begins_with("flag."):
+				var fl = vm.globals.get("flag")
+				vm.globals["flag"] = vm._arr_set(fl, int(p[0].substr(5)), -1, float(p[1]))
+			else:
+				vm.globals[p[0]] = float(p[1])
+	var r := _jump_to
+	_jump_to = -1
+	vm.load_room(r)
+
+
+func _game_frame() -> void:
+	var tl := Time.get_ticks_usec()
+	frames += 1
+	if game_clock:
+		bi.clock_ms = (frames - 1) * 1000.0 / 30.0
+	var gk = _game_auto_keys()
+	if gk == null and debug != null and debug.open:
+		gk = []     # the debug menu has the keyboard
+	keys.poll(gk)
+	vm.step_frame(keys)
+	vm.room_frame_end()
+	var guard := 0
+	while vm.pending_room != -1 and guard < 4:
+		guard += 1
+		var r: int = vm.pending_room
+		vm.pending_room = -1
+		vm.load_room(r)
+		vm.step_frame(keys)
+		vm.room_frame_end()
+	if _jump_to >= 0 and vm.room != int(vm.consts.get(String(vm.meta["room_order"][0]), 0.0)):
+		_game_jump()
+	if vm.room != _game_room_seen:
+		_game_room_seen = vm.room
+		if DisplayServer.get_name() == "headless":
+			print("ROOM %s frame %d" % [vm.room_names[vm.room], frames])
+	if vm.game_end_requested:
+		if vm.game_restart_requested:
+			vm.game_restart_requested = false
+			start_game()
+			return
+		_end_game()
+		return
+	if _bot_exit or ((DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--gameshot") or bot != null) and frames >= frame_cap):
+		var pl = vm.first_of(float(vm.obj_index.get("obj_mainchara", -1)), {"self": null, "other": null})
+		print("GAME stopped at frame %d in %s, %d instances, player %s, plot %s" % [frames, vm.room_names[vm.room], vm.instances.size(), ("%s,%s" % [pl.v["x"], pl.v["y"]]) if pl != null else "-", bi.gm_string(vm.globals.get("plot", 0.0))])
+		if OS.get_cmdline_user_args().has("--dumpinst"):
+			for ins in vm.instances:
+				var al: Array = []
+				for k in ins.alarm.size():
+					if float(ins.alarm[k]) >= 0.0:
+						al.append("%d=%s" % [k, ins.alarm[k]])
+				print("  %d %s (%s,%s) depth=%s vis=%s %s" % [ins.id, vm.obj_names[ins.obj], ins.v["x"], ins.v["y"], ins.v["depth"], ins.v["visible"], " ".join(al)])
+			print("  globals plot=%s interact=%s" % [vm.globals.get("plot"), vm.globals.get("interact")])
+		screen = Screen.RESULT
+		get_tree().quit()
+		return
+	rec.clear()
+	bi.canvas = rec
+	if bi.views_on:
+		rec.view = Vector2(float(bi.view_xview[0]), float(bi.view_yview[0]))
+		var wv := maxf(1.0, float(bi.view_wview[0]))
+		var hv := maxf(1.0, float(bi.view_hview[0]))
+		rec.view_scale = Vector2(float(bi.room_arr["view_wport"][0]) / wv, float(bi.room_arr["view_hport"][0]) / hv)
+	else:
+		rec.view = Vector2.ZERO
+		rec.view_scale = Vector2.ONE
+	vm.draw_frame()
+	bi.canvas = null
+	if OS.get_cmdline_user_args().has("--viewlog") and frames % 50 == 0:
+		print("VIEW f=%d on=%s view=%s scale=%s port=%s" % [frames, bi.views_on, rec.view, rec.view_scale, bi.room_arr["view_wport"][0]])
+	last_logic_us = Time.get_ticks_usec() - tl
+	if OS.get_cmdline_user_args().has("--watch") and frames % 10 == 0:
+		var wl := "WATCH f=%d %s plot=%s interact=%s" % [frames, vm.room_names[vm.room], bi.gm_string(vm.globals.get("plot", 0.0)), bi.gm_string(vm.globals.get("interact", 0.0))]
+		for ins in vm.instances:
+			var nm: String = vm.obj_names[ins.obj]
+			if nm.begins_with("obj_tor") or nm == "obj_mainchara":
+				var sp := int(ins.v["sprite_index"])
+				wl += " | %s (%s,%s) %s dir=%s pp=%s" % [nm, ins.v["x"], ins.v["y"], vm.sprite_names[sp] if sp >= 0 else "-", ins.v["direction"], bi.gm_string(ins.v.get("path_position", 0.0))]
+		print(wl)
+	if debug != null:
+		debug.test_hooks(frames)
+	if not _game_shots.is_empty():
+		_game_shot_check()
+	if OS.get_cmdline_user_args().has("--smoothprobe"):
+		_smooth_probe()
+	if not bi.unknown.is_empty() and OS.get_cmdline_user_args().has("--unknown"):
+		for k in bi.unknown:
+			if bi.unknown[k] == true:
+				print("UNKNOWN %s (room %s, frame %d)" % [k, vm.room_names[vm.room], frames])
+				bi.unknown[k] = 2
+
+
+# --smoothprobe (testing): where the player's sprite lands on screen at in-between render
+# moments, to check that smoothing moves it evenly and in step with the view.
+class ProbeCanvas:
+	var xf := Transform2D.IDENTITY
+	var owner_ok := false
+	var hits: Array = []
+	func draw_set_transform(p: Vector2, r := 0.0, s := Vector2.ONE) -> void:
+		xf = Transform2D(r, s, 0.0, p)
+	func draw_texture(_t, p: Vector2, _m := Color.WHITE) -> void:
+		hits.append(xf * p)
+	func draw_texture_rect(_t, r: Rect2, _tile := false, _m := Color.WHITE) -> void:
+		hits.append(xf * r.position)
+	func draw_texture_rect_region(_t, r: Rect2, _src := Rect2(), _m := Color.WHITE) -> void:
+		hits.append(xf * r.position)
+	func _noop(_a = null, _b = null, _c = null, _d = null, _e = null) -> void:
+		pass
+	func draw_rect(_a = null, _b = null, _c = null, _d = null) -> void: pass
+	func draw_line(_a = null, _b = null, _c = null, _d = null) -> void: pass
+	func draw_arc(_a = null, _b = null, _c = null, _d = null, _e = null, _f = null, _g = null) -> void: pass
+	func draw_circle(_a = null, _b = null, _c = null) -> void: pass
+	func draw_polyline(_a = null, _b = null, _c = null) -> void: pass
+	func draw_colored_polygon(_a = null, _b = null) -> void: pass
+	func draw_string(_a = null, _b = null, _c = null, _d = null, _e = null, _f = null, _g = null) -> void: pass
+
+
+func _smooth_probe() -> void:
+	var pl = vm.first_of(float(vm.obj_index.get("obj_mainchara", -1)), {"self": null, "other": null})
+	if pl == null:
+		return
+	# Only the player's own drawing: keep its segment of ops.
+	var keep: Array = rec.ops
+	var start := -1
+	for k in keep.size():
+		if keep[k][0] == "@owner" and keep[k][1][0] == pl.id:
+			start = k
+			break
+	if start < 0:
+		return
+	var out := "SMOOTH f=%d x=%s y=%s view=%s" % [frames, pl.v["x"], pl.v["y"], rec.view]
+	for f in [0.0, 0.25, 0.5, 0.75, 1.0]:
+		var pc := ProbeCanvas.new()
+		rec.replay(pc, f)
+		# the player's sprite is the first texture after its owner op: find by replaying only up to it
+		var n_before := 0
+		for k in start:
+			var nm: String = keep[k][0]
+			if nm.begins_with("draw_texture"):
+				n_before += 1
+		var p: Vector2 = pc.hits[n_before] if n_before < pc.hits.size() else Vector2(-1, -1)
+		out += "  %.2f:%s" % [f, p]
+	print(out)
+
+
+func _end_game() -> void:
+	bi._ini_flush()
+	if DisplayServer.get_name() == "headless":
+		print("GAME ended (game_end) at frame %d" % frames)
+		screen = Screen.LIST
+		get_tree().quit()
+		return
+	for p in bi.players:
+		p["player"].stop()
+	vm.vlog("GAME end")
+	screen = Screen.LIST
 
 
 func start_battle(index: int) -> void:
 	sel = index
-	var entry: Array = ROSTER[index]
+	var entry: Array = trace_entry if index == TRACE_ONLY else ROSTER[index]
 	var spec: Dictionary = entry[2]
 	_reset_runtime()
 	var g: Dictionary = vm.globals
@@ -303,6 +694,16 @@ func start_battle(index: int) -> void:
 	# randomize() and right before the battle room is built.
 	if trace_seed >= 0:
 		bi.rng.set_seed(trace_seed)
+		bi.clock_ms = -1.0
+		recording = null
+	elif not sweep:
+		# Normal play is recorded for bug reports: a known seed here, the clock on game
+		# frames, every key per frame (see fight_replay.gd).
+		var rs: int = playback.seed if playback != null else (randi() & 0x7FFFFFFF)
+		bi.rng.set_seed(rs)
+		bi.clock_ms = 0.0
+		recording = FightReplay.new()
+		recording.begin(_battle_info(index), lv, rs)
 	load_room(int(vm.consts["room_battle"]))
 	if not spec.has("bg"):
 		g["monstertype"] = [[float(spec["type"]), 0.0, 0.0]]
@@ -325,60 +726,7 @@ func start_battle(index: int) -> void:
 
 
 func load_room(r: int) -> void:
-	# Room End for everyone, drop non-persistent instances, then build the new room.
-	for i in vm.instances.duplicate():
-		if not i.dead:
-			vm.perform_event(i, vm.EV_OTHER, 5, null)
-	var keep: Array = []
-	for i in vm.instances:
-		if not i.dead and float(i.v.get("persistent", 0.0)) >= 0.5:
-			keep.append(i)
-		else:
-			vm.by_id.erase(i.id)
-	vm.instances = keep
-	vm.room = r
-	var name: String = vm.room_names[r] if r >= 0 and r < vm.room_names.size() else ""
-	var rooms: Dictionary = vm.meta["rooms"]
-	if not rooms.has(name):
-		vm.warn_once("room:" + name, "room %s is not part of the battle engine" % name)
-		return
-	var rd: Dictionary = rooms[name]
-	vm.room_width = int(rd["width"])
-	vm.room_height = int(rd["height"])
-	vm.room_speed = int(rd["speed"])
-	var created: Array = []
-	for inst_def in rd["instances"]:
-		if inst_def[0] == null or not vm.obj_index.has(inst_def[0]):
-			continue
-		var o: int = vm.obj_index[inst_def[0]]
-		# Persistent objects already present are not created twice.
-		if vm.obj_persistent[o]:
-			var exists := false
-			for k in vm.instances:
-				if k.obj == o:
-					exists = true
-			if exists:
-				continue
-		var inst = vm.instance_create(float(inst_def[1]), float(inst_def[2]), o, false)
-		inst.v["image_xscale"] = float(inst_def[3])
-		inst.v["image_yscale"] = float(inst_def[4])
-		created.append([inst, inst_def[6]])
-	# Every placed instance exists before any Create event runs, as in GameMaker Studio
-	# (measured: Sans's Create, run from obj_battlecontroller's, hides the box borders that
-	# come after the controller in room_battle's list).
-	for c in created:
-		var inst = c[0]
-		if inst.dead:
-			continue
-		vm.perform_event(inst, vm.EV_CREATE, 0, null)
-		if c[1] != null and not inst.dead:
-			vm.run_code(c[1], inst, inst)
-	if rd["code"] != null:
-		vm.run_code(rd["code"], null, null)
-	for i in vm.instances.duplicate():
-		if not i.dead:
-			vm.perform_event(i, vm.EV_OTHER, 4, null)
-	vm.purge_dead()
+	vm.load_room(r)
 
 
 # ---------------------------------------------------------------- frames
@@ -391,9 +739,27 @@ func _physics_process(_delta: float) -> void:
 			_poll_menu_keys()
 			if _menu_pressed(90) or _menu_pressed(13) or _menu_pressed(88):
 				screen = Screen.LIST
-		Screen.BATTLE:
-			if not tracing:
-				_battle_frame()
+		Screen.BATTLE, Screen.GAME:
+			if tracing and screen == Screen.BATTLE:
+				return
+			# Game speed (debug menu): several frames per tick, or a frame every few ticks.
+			var n := 0
+			if step_once:
+				n = 1
+			elif not paused:
+				_speed_acc += game_speed
+				n = int(_speed_acc)
+				_speed_acc -= n
+			step_once = false
+			for k in mini(n, 8):
+				if debug != null:
+					debug.before_frame()
+				if screen == Screen.BATTLE:
+					_battle_frame()
+				elif screen == Screen.GAME:
+					_game_frame()
+				else:
+					break
 
 
 var perf_draw_us := 0
@@ -406,29 +772,51 @@ var perf_ops := 0
 
 func _battle_frame() -> void:
 	var tl := Time.get_ticks_usec()
+	var before: Dictionary = vm.prof.duplicate() if vm.prof != null else {}
 	_battle_frame_inner()
 	var dt := Time.get_ticks_usec() - tl
+	last_logic_us = dt
 	perf_logic_us += dt
 	if frames > 1:
 		perf_logic_max = maxi(perf_logic_max, dt)
-		if dt > 20000 and OS.get_cmdline_user_args().has("--spikes"):
-			print("SPIKE frame=%d %.1fms" % [frames, dt / 1000.0])
+		var lim := 8000 if vm.prof != null else 20000
+		if dt > lim and OS.get_cmdline_user_args().has("--spikes"):
+			var top := ""
+			if vm.prof != null:
+				# With --prof: where this frame's time went.
+				var d := {}
+				for k in vm.prof:
+					var v: int = int(vm.prof[k]) - int(before.get(k, 0))
+					if v > 300:
+						d[k] = v
+				var ks: Array = d.keys()
+				ks.sort_custom(func(x, y): return d[x] > d[y])
+				for k in ks.slice(0, 8):
+					top += " %s=%.1f" % [k, d[k] / 1000.0]
+			print("SPIKE frame=%d %.1fms inst=%d%s" % [frames, dt / 1000.0, vm.instances.size(), top])
 	perf_ops = maxi(perf_ops, rec.ops.size())
 
 
 func _battle_frame_inner() -> void:
 	frames += 1
 	var auto = _auto_keys() if auto_index >= 0 else null
+	if playback != null:
+		auto = playback.keys_at(frames)
 	if trace_replay != null:
 		auto = []
 		var bits: int = trace_replay.get(frames, 0)
 		for b in TRACE_KEYS.size():
 			if bits & (1 << b):
 				auto.append(TRACE_KEYS[b])
+	if auto == null and debug != null and debug.open:
+		auto = []     # the debug menu has the keyboard
 	keys.poll(auto)
-	if auto == null and keys.held(27):
+	if (auto == null and keys.held(27)) or (playback != null and not sweep and Input.is_physical_key_pressed(KEY_ESCAPE)):
 		_end_battle("Left the battle.")
 		return
+	if recording != null:
+		recording.add_frame(keys.real.keys())
+		bi.clock_ms = (frames - 1) * 1000.0 / 30.0
 	var hp0 := float(vm.globals.get("hp", 0.0))
 	var clog := OS.get_cmdline_user_args().has("--colllog")
 	if trace_hits or clog:
@@ -462,14 +850,23 @@ func _battle_frame_inner() -> void:
 		vm.draw_hook_depth = -100000.0
 		vm.draw_hook = func(): _trace_line(auto)
 	rec.view = Vector2(float(bi.view_xview[0]), float(bi.view_yview[0]))
+	var tdraw := Time.get_ticks_usec()
 	vm.draw_frame()
+	if vm.prof != null:
+		vm.prof["#draw_events"] = vm.prof.get("#draw_events", 0) + Time.get_ticks_usec() - tdraw
 	vm.draw_hook = Callable()
 	bi.canvas = null
 	if trace_hits:
 		_trace_hit(hp1, " (in Draw)")
 		vm.coll_log = null
+	if debug != null:
+		debug.test_hooks(frames)
 	if not sweep:
 		_auto_report()
+	if report_at == frames:
+		_save_report(report_dir)
+	if playback != null:
+		_playback_frame()
 
 
 # --hits: one line per HP change, with the collision events that fired this frame.
@@ -495,6 +892,8 @@ func _trace_hit(before: float, where := "") -> void:
 func _end_battle(text: String) -> void:
 	result_text = text
 	battle_over = true
+	if playback != null:
+		_playback_frame(true)
 	if sweep:
 		return
 	for p in bi.players:
@@ -516,7 +915,7 @@ var menu_prev := {}
 func _poll_menu_keys() -> void:
 	menu_prev = menu_now
 	menu_now = {}
-	for pair in [[KEY_UP, 38], [KEY_DOWN, 40], [KEY_LEFT, 37], [KEY_RIGHT, 39], [KEY_Z, 90], [KEY_ENTER, 13], [KEY_X, 88], [KEY_SHIFT, 88], [KEY_ESCAPE, 27], [KEY_W, 38 if wasd else 0], [KEY_S, 40 if wasd else 0]]:
+	for pair in [[KEY_UP, 38], [KEY_DOWN, 40], [KEY_LEFT, 37], [KEY_RIGHT, 39], [KEY_Z, 90], [KEY_ENTER, 13], [KEY_X, 88], [KEY_SHIFT, 88], [KEY_ESCAPE, 27], [KEY_C, 67], [KEY_G, 71], [KEY_W, 38 if wasd else 0], [KEY_S, 40 if wasd else 0]]:
 		if pair[1] != 0 and Input.is_physical_key_pressed(pair[0]):
 			menu_now[pair[1]] = true
 
@@ -546,10 +945,34 @@ func _entries(area: int, kind: int) -> Array:
 
 
 func _save_settings() -> void:
-	var cfg := ConfigFile.new()
-	cfg.set_value("input", "wasd", wasd)
-	cfg.set_value("player", "lv", lv)
-	cfg.save("user://settings.cfg")
+	settings["input/wasd"] = wasd
+	settings["player/lv"] = lv
+	settings["display/smooth"] = smooth
+	settings["display/window_scale"] = window_scale
+	settings["display/pixel_perfect"] = pixel_perfect
+	settings["display/fullscreen"] = fullscreen
+	settings["debug/overlay"] = overlay
+	Settings.save_settings(settings)
+
+
+# Window size (a multiple of 640x480), scaling (whole multiples only, or fill the window
+# keeping 4:3) and fullscreen. The game itself always renders at 640x480.
+func _apply_display(resize := false) -> void:
+	var win := get_window()
+	win.content_scale_stretch = Window.CONTENT_SCALE_STRETCH_INTEGER if pixel_perfect else Window.CONTENT_SCALE_STRETCH_FRACTIONAL
+	if fullscreen:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+		return
+	if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		resize = true
+	if resize:
+		var screen_size := DisplayServer.screen_get_usable_rect(win.current_screen).size
+		var n := window_scale
+		while n > 1 and (640 * n > screen_size.x or 480 * n > screen_size.y):
+			n -= 1
+		win.size = Vector2i(640 * n, 480 * n)
+		win.move_to_center()
 
 
 func _list_input() -> void:
@@ -558,18 +981,20 @@ func _list_input() -> void:
 		get_tree().quit()
 		return
 	if setup_open:
-		if _menu_pressed(38) or _menu_pressed(40):
-			setup_row = 1 - setup_row
+		if _menu_pressed(38):
+			setup_row = (setup_row + SETUP_ROWS - 1) % SETUP_ROWS
+		if _menu_pressed(40):
+			setup_row = (setup_row + 1) % SETUP_ROWS
 		var d := (1 if _menu_pressed(39) else 0) - (1 if _menu_pressed(37) else 0)
-		if d != 0 or (_menu_pressed(90) and setup_row == 1):
-			if setup_row == 0:
-				lv = clampi(lv + d, 1, 20)
-			else:
-				wasd = not wasd
-				keys.wasd = wasd
-			_save_settings()
+		if d == 0 and _menu_pressed(90) and setup_row != 0:
+			d = 1
+		if d != 0:
+			_setup_change(setup_row, d)
 		if _menu_pressed(88) or _menu_pressed(67):
 			setup_open = false
+		return
+	if _menu_pressed(71):
+		start_game()
 		return
 	if _menu_pressed(67):
 		setup_open = true
@@ -600,6 +1025,12 @@ func _list_input() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouse:
+		if debug != null and debug.open:
+			# Clicks on the game while the debug menu is open pick objects (Inspect) or move
+			# the player; the game itself gets none.
+			if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+				debug.game_click(event.position)
+			return
 		_mouse(event)
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -609,9 +1040,22 @@ func _unhandled_input(event: InputEvent) -> void:
 			_save_settings()
 		elif event.keycode == KEY_F2:
 			smooth = not smooth
+			_save_settings()
 		elif event.keycode == KEY_F4:
-			var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
-			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
+			fullscreen = DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_FULLSCREEN
+			_apply_display()
+			_save_settings()
+		elif event.keycode == KEY_F9:
+			overlay = not overlay
+			_save_settings()
+		elif event.keycode == KEY_F10 and (screen == Screen.BATTLE or screen == Screen.GAME):
+			paused = not paused
+			_toast("Paused (F11: one frame, F10: resume)" if paused else "Resumed")
+		elif event.keycode == KEY_F11 and (screen == Screen.BATTLE or screen == Screen.GAME):
+			paused = true
+			step_once = true
+		elif event.keycode == KEY_F12:
+			_save_report()
 
 
 # ---------------------------------------------------------------- drawing
@@ -619,8 +1063,22 @@ func _unhandled_input(event: InputEvent) -> void:
 var _menushot_wait := 0
 
 
+var _hitch_t := 0
+var _hitch_logic := 0
+var _hitch_draw := 0
+
+
 func _process(_delta: float) -> void:
 	queue_redraw()
+	# --hitchlog: report every displayed frame that took over 25 ms, with the game logic
+	# and drawing time spent in it (the rest is Godot's rendering and waiting).
+	if screen == Screen.BATTLE and OS.get_cmdline_user_args().has("--hitchlog"):
+		var now := Time.get_ticks_usec()
+		if _hitch_t > 0 and now - _hitch_t > 25000:
+			print("HITCH frame=%d dt=%.1fms logic=%.1fms draw=%.1fms inst=%d ops=%d" % [frames, (now - _hitch_t) / 1000.0, (perf_logic_us - _hitch_logic) / 1000.0, (perf_draw_us - _hitch_draw) / 1000.0, vm.instances.size(), rec.ops.size()])
+		_hitch_t = now
+		_hitch_logic = perf_logic_us
+		_hitch_draw = perf_draw_us
 	# Compile the game's translated code in the background while the menus are idle.
 	if vm != null and (screen == Screen.LIST or screen == Screen.RESULT):
 		vm.warm_step(6000)
@@ -651,12 +1109,20 @@ func _draw() -> void:
 		Screen.RESULT:
 			_text(40, 200, result_text, 65535)
 			_text(40, 260, "[Z] Back to the list", 8421504, "fnt_maintext")
-		Screen.BATTLE:
+		Screen.BATTLE, Screen.GAME:
 			var td := Time.get_ticks_usec()
-			rec.replay(self, Engine.get_physics_interpolation_fraction() if smooth else 1.0)
+			rec.replay(self, Engine.get_physics_interpolation_fraction() if smooth and not paused else 1.0)
 			perf_draw_us += Time.get_ticks_usec() - td
 			perf_draws += 1
 			perf_draw_max = maxi(perf_draw_max, Time.get_ticks_usec() - td)
+			if overlay:
+				_draw_overlay()
+			elif paused or playback != null:
+				_small(8, 14, ("PAUSED  " if paused else "") + ("REPLAY" if playback != null else ""), Color(1, 1, 0))
+	if toast != "" and Time.get_ticks_msec() < toast_until:
+		var w := ThemeDB.fallback_font.get_string_size(toast, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+		draw_rect(Rect2(316 - w / 2, 452, w + 8, 20), Color(0, 0, 0, 0.8))
+		_small(320 - w / 2, 466, toast, Color(1, 1, 0.6))
 
 
 var hits: Array = []        # [Rect2, kind, value] clickable areas of the current menu screen
@@ -728,32 +1194,86 @@ func _draw_list() -> void:
 		_text(600, 112 + (rows - 1) * 34, "v" if scroll + rows < list.size() else "", 8421504, "fnt_maintext")
 	if vm.warm_progress() < 1.0:
 		_text(24, 428, "Preparing battles... %d%%" % int(vm.warm_progress() * 100.0), 8421504, "fnt_maintext")
-	_text(24, 450, "[ARROWS/MOUSE] Choose  [Z/CLICK] Fight  [C] Setup  [F4] Fullscreen  [ESC] Quit", 8421504, "fnt_maintext")
+	_text(24, 450, "[ARROWS/MOUSE] Choose  [Z/CLICK] Fight  [C] Setup  [G] Play the game  [ESC] Quit", 8421504, "fnt_maintext")
+	var mod_n: int = mods.get("mods", []).size()
+	var mod_p: int = mods.get("problems", []).size()
+	if mod_n > 0 or mod_p > 0:
+		_text(616 - _font_w("Mods: %d" % mod_n), 428, "Mods: %d%s" % [mod_n, "  (%d with problems)" % mod_p if mod_p > 0 else ""], 16776960 if mod_p > 0 else 8421504, "fnt_maintext")
 	if setup_open:
 		hits.clear()     # the panel takes the mouse while it is open
-		draw_rect(Rect2(150, 150, 340, 160), Color.BLACK)
-		draw_rect(Rect2(150, 150, 340, 160), Color.WHITE, false, 3.0)
-		_text(176, 166, "PLAYER SETUP", 16777215)
-		var y0 := 210
-		# LV row with clickable arrows.
-		var lc := 65535 if setup_row == 0 else 16777215
-		_text(196, y0, "LV", lc)
-		_text(250, y0, "<", 16777215 if _hovered("lv", -1) else lc)
-		_hit(Rect2(244, y0 - 2, 26, 30), "lv", -1)
-		_text(280, y0, "%d" % lv, lc)
-		_text(324, y0, ">", 16777215 if _hovered("lv", 1) else lc)
-		_hit(Rect2(318, y0 - 2, 26, 30), "lv", 1)
-		_text(356, y0 + 8, "HP %d" % (99 if lv == 20 else 16 + lv * 4), 8421504, "fnt_maintext")
-		_hit(Rect2(170, y0 - 2, 70, 30), "setup_row", 0)
-		var mc := 65535 if setup_row == 1 else 16777215
-		_text(196, y0 + 34, "Movement  " + ("WASD" if wasd else "ARROWS"), 16777215 if _hovered("move") else mc)
-		_hit(Rect2(170, y0 + 32, 300, 30), "move")
-		_heart(172, 218 + setup_row * 34)
-		var close_r := Rect2(398, 278, 80, 24)
+		draw_rect(SETUP_RECT, Color.BLACK)
+		draw_rect(SETUP_RECT, Color.WHITE, false, 3.0)
+		_text(SETUP_RECT.position.x + 26, SETUP_RECT.position.y + 14, "SETUP", 16777215)
+		var y0 := int(SETUP_RECT.position.y) + 56
+		for r in SETUP_ROWS:
+			var ry := y0 + r * SETUP_ROW_H
+			var c := 65535 if setup_row == r else 16777215
+			var label: String = SETUP_LABELS[r]
+			var value := _setup_value(r)
+			_text(196, ry, label, c, "fnt_maintext")
+			_text(354, ry, "<", 16777215 if _hovered("adj", [r, -1]) else c, "fnt_maintext")
+			_hit(Rect2(346, ry - 4, 22, 24), "adj", [r, -1])
+			_text(374, ry, value, c, "fnt_maintext")
+			_text(484, ry, ">", 16777215 if _hovered("adj", [r, 1]) else c, "fnt_maintext")
+			_hit(Rect2(476, ry - 4, 22, 24), "adj", [r, 1])
+			_hit(Rect2(170, ry - 4, 170, 24), "setup_row", r)
+			if r == setup_row:
+				_heart(172, ry + 2)
+		if setup_row == 0:
+			_text(196, y0 + SETUP_ROWS * SETUP_ROW_H + 2, "HP %d" % (99 if lv == 20 else 16 + lv * 4), 8421504, "fnt_maintext")
+		var close_r := Rect2(SETUP_RECT.end.x - 96, SETUP_RECT.end.y - 34, 80, 24)
 		draw_rect(close_r, Color(1, 1, 0) if _hovered("close") else Color(0.5, 0.5, 0.5), false, 2.0)
-		_text(414, 282, "CLOSE", 65535 if _hovered("close") else 16777215, "fnt_maintext")
+		_text(close_r.position.x + 16, close_r.position.y + 4, "CLOSE", 65535 if _hovered("close") else 16777215, "fnt_maintext")
 		_hit(close_r, "close")
-		_text(166, 284, "[LEFT/RIGHT] Change", 8421504, "fnt_maintext")
+		_text(SETUP_RECT.position.x + 16, SETUP_RECT.end.y - 30, "[UP/DOWN] Choose  [LEFT/RIGHT] Change", 8421504, "fnt_maintext")
+
+
+const SETUP_RECT := Rect2(150, 96, 370, 300)
+const SETUP_ROW_H := 30
+const SETUP_ROWS := 6
+const SETUP_LABELS := ["LV", "Movement", "Smooth motion", "Window size", "Scaling", "Fullscreen"]
+
+
+func _setup_value(r: int) -> String:
+	match r:
+		0:
+			return "%d" % lv
+		1:
+			return "WASD" if wasd else "ARROWS"
+		2:
+			return "ON" if smooth else "OFF"
+		3:
+			return "%dx (%dx%d)" % [window_scale, 640 * window_scale, 480 * window_scale]
+		4:
+			return "PIXEL-PERFECT" if pixel_perfect else "FILL"
+		5:
+			return "ON" if fullscreen else "OFF"
+	return ""
+
+
+# Smooth motion draws between the game's 30 frames a second at the screen's own rate;
+# the game logic itself always runs at 30, exactly like the original.
+func _setup_change(r: int, d: int) -> void:
+	setup_row = r
+	match r:
+		0:
+			lv = clampi(lv + d, 1, 20)
+		1:
+			wasd = not wasd
+			keys.wasd = wasd
+		2:
+			smooth = not smooth
+		3:
+			window_scale = wrapi(window_scale + d, 1, 5)
+			fullscreen = false
+			_apply_display(true)
+		4:
+			pixel_perfect = not pixel_perfect
+			_apply_display()
+		5:
+			fullscreen = not fullscreen
+			_apply_display(true)
+	_save_settings()
 
 
 func _heart(x: float, y: float) -> void:
@@ -799,7 +1319,7 @@ func _mouse(event: InputEvent) -> void:
 			if event.button_index != MOUSE_BUTTON_LEFT:
 				return
 			if setup_open and h.is_empty():
-				if not Rect2(150, 150, 340, 160).has_point(p):
+				if not SETUP_RECT.has_point(p):
 					setup_open = false
 				return
 			match hover_kind:
@@ -819,17 +1339,10 @@ func _mouse(event: InputEvent) -> void:
 					var list := _entries(tab_area, _area_tabs(tab_area)[tab_kind])
 					sel = hover_value
 					start_battle(list[sel])
-				"lv":
-					setup_row = 0
-					lv = clampi(lv + int(hover_value), 1, 20)
-					_save_settings()
+				"adj":
+					_setup_change(int(hover_value[0]), int(hover_value[1]))
 				"setup_row":
-					setup_row = 0
-				"move":
-					setup_row = 1
-					wasd = not wasd
-					keys.wasd = wasd
-					_save_settings()
+					setup_row = int(hover_value)
 				"close":
 					setup_open = false
 		Screen.RESULT:
@@ -872,7 +1385,7 @@ func _select_button(k: int) -> void:
 
 
 func _battle_mouse(event: InputEvent, p: Vector2) -> void:
-	if auto_index >= 0:
+	if auto_index >= 0 or playback != null:
 		return
 	if event is InputEventMouseMotion:
 		if _in_main_menu() and keys.queue.is_empty():
@@ -899,6 +1412,229 @@ func _battle_mouse(event: InputEvent, p: Vector2) -> void:
 		MOUSE_BUTTON_WHEEL_DOWN:
 			keys.tap(40)
 
+# ---------------------------------------------------------------- bug reports, replays, overlay
+
+func _toast(t: String, ms := 4000) -> void:
+	toast = t
+	toast_until = Time.get_ticks_msec() + ms
+	vm.vlog("TOAST " + t)
+
+
+func _small(x: float, y: float, t: String, c := Color.WHITE) -> void:
+	draw_string(ThemeDB.fallback_font, Vector2(x, y), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, c)
+
+
+func _battle_info(index: int) -> Dictionary:
+	var e: Array = trace_entry if index == TRACE_ONLY else ROSTER[index]
+	return {"index": index, "area": e[0], "name": e[1], "spec": e[2]}
+
+
+# A short fingerprint of the fight's state; a replay must reach the same one.
+func _state_sig() -> String:
+	var n := 0
+	var sx := 0.0
+	var sy := 0.0
+	for ins in vm.instances:
+		if ins.dead or float(ins.v.get("persistent", 0.0)) >= 0.5:
+			continue
+		n += 1
+		sx += float(ins.v["x"])
+		sy += float(ins.v["y"])
+	var g: Dictionary = vm.globals
+	return "f=%d hp=%s turn=%s n=%d sx=%.4f sy=%.4f room=%d" % [frames, bi.gm_string(g.get("hp", 0.0)), bi.gm_string(g.get("turn", 0.0)), n, sx, sy, vm.room]
+
+
+# F12: the fight so far as a replay, a screenshot and a readable summary, in its own folder.
+func _save_report(dir := "") -> void:
+	if screen == Screen.GAME:
+		_save_game_report()
+		return
+	if recording == null or recording.frames.is_empty():
+		_toast("Nothing to report yet: start a fight first.")
+		return
+	if dir == "":
+		dir = "user://reports/" + Time.get_datetime_string_from_system(false, true).replace(":", "-").replace(" ", "_")
+	DirAccess.make_dir_recursive_absolute(dir)
+	recording.check = {"frame": frames, "state": _state_sig()}
+	var err: Error = recording.save(dir.path_join("replay.json"))
+	if err != OK:
+		_toast("Couldn't save the bug report (error %d)." % err)
+		return
+	if DisplayServer.get_name() != "headless":
+		var img := get_viewport().get_texture().get_image()
+		if img != null:
+			img.save_png(dir.path_join("screenshot.png"))
+	var counts := {}
+	for ins in vm.instances:
+		if not ins.dead:
+			var nm: String = vm.obj_names[ins.obj]
+			counts[nm] = counts.get(nm, 0) + 1
+	var objs: Array = []
+	for k in counts:
+		objs.append("%s x%d" % [k, counts[k]])
+	objs.sort()
+	var g: Dictionary = vm.globals
+	var lines := [
+		"%s %s bug report" % [Info.NAME, Info.VERSION],
+		"Saved: %s" % Time.get_datetime_string_from_system(false, true),
+		"Battle: %s (%s), group %s" % [recording.battle.get("name", "?"), recording.battle.get("area", "?"), bi.gm_string(g.get("battlegroup", 0.0))],
+		"Player: LV %d, HP %s / %s" % [recording.lv, bi.gm_string(g.get("hp", 0.0)), bi.gm_string(g.get("maxhp", 0.0))],
+		"Frame: %d (%s)" % [frames, result_text if battle_over else "in battle"],
+		"State: %s" % recording.check["state"],
+		"Seed: %d" % recording.seed,
+		"Objects: " + ", ".join(objs),
+		"Debug menu: " + ("; ".join(debug_used) + " (the replay doesn't repeat these changes)" if not debug_used.is_empty() else "not used"),
+		"",
+		"Describe what went wrong here:",
+		"",
+		"",
+		"Replay it (from the project folder):",
+		"  godot --path godot -- --playback \"%s\"" % ProjectSettings.globalize_path(dir.path_join("replay.json")),
+	]
+	var f := FileAccess.open(dir.path_join("summary.txt"), FileAccess.WRITE)
+	if f != null:
+		f.store_string("\n".join(lines) + "\n")
+	var where := ProjectSettings.globalize_path(dir)
+	print("REPORT saved frame=%d state=%s -> %s" % [frames, recording.check["state"], where])
+	_toast("Bug report saved: " + where, 6000)
+
+
+# The overworld has no replays yet: its report is a screenshot, where the player is, and a
+# copy of the game's save files (load them to get back to the same place).
+func _save_game_report() -> void:
+	var dir := "user://reports/" + Time.get_datetime_string_from_system(false, true).replace(":", "-").replace(" ", "_")
+	DirAccess.make_dir_recursive_absolute(dir.path_join("saves"))
+	if DisplayServer.get_name() != "headless":
+		var img := get_viewport().get_texture().get_image()
+		if img != null:
+			img.save_png(dir.path_join("screenshot.png"))
+	bi._ini_flush()
+	for fn in DirAccess.get_files_at(bi.save_dir):
+		DirAccess.copy_absolute(bi.save_dir.path_join(fn), ProjectSettings.globalize_path(dir.path_join("saves/" + fn)))
+	var g: Dictionary = vm.globals
+	var pl = vm.first_of(float(vm.obj_index.get("obj_mainchara", -1)), {"self": null, "other": null})
+	var lines := [
+		"%s %s bug report (overworld)" % [Info.NAME, Info.VERSION],
+		"Saved: %s" % Time.get_datetime_string_from_system(false, true),
+		"Room: %s, frame %d" % [vm.room_names[vm.room], frames],
+		"Player: %s" % (("(%s, %s)" % [pl.v["x"], pl.v["y"]]) if pl != null else "-"),
+		"Story: plot %s, interact %s, HP %s / %s, LV %s" % [bi.gm_string(g.get("plot", 0.0)), bi.gm_string(g.get("interact", 0.0)), bi.gm_string(g.get("hp", 0.0)), bi.gm_string(g.get("maxhp", 0.0)), bi.gm_string(g.get("lv", 0.0))],
+		"saves/ holds the game's save files at this moment.",
+		"Debug menu: " + ("; ".join(debug_used) if not debug_used.is_empty() else "not used"),
+		"",
+		"Describe what went wrong here (and what real Undertale does instead):",
+		"",
+	]
+	var f := FileAccess.open(dir.path_join("summary.txt"), FileAccess.WRITE)
+	if f != null:
+		f.store_string("
+".join(lines) + "
+")
+	var where := ProjectSettings.globalize_path(dir)
+	print("REPORT saved (overworld) -> " + where)
+	_toast("Bug report saved: " + where, 6000)
+
+
+# --playback FILE: replays a recorded fight. Fast (headless or --fast) runs it through,
+# checks the state at the report's frame and quits; otherwise it plays on screen and hands
+# the controls to the player when the recording runs out.
+func _start_playback(rp, fast: bool) -> void:
+	playback = rp
+	playback_checked = false
+	lv = rp.lv
+	var b: Dictionary = rp.battle
+	var idx := int(b.get("index", -1))
+	if idx < 0 or idx >= ROSTER.size() or ROSTER[idx][1] != b.get("name", ""):
+		trace_entry = [b.get("area", "TRACE"), b.get("name", "?"), b.get("spec", {})]
+		idx = TRACE_ONLY
+	print("PLAYBACK %s lv=%d seed=%d frames=%d check=%s" % [b.get("name", "?"), rp.lv, rp.seed, rp.frames.size(), str(rp.check.get("frame", "-"))])
+	if not fast:
+		start_battle(idx)
+		_toast("Replaying a recorded fight (Esc leaves)")
+		return
+	tracing = true
+	start_battle(idx)
+	var last := maxi(rp.frames.size(), int(rp.check.get("frame", 0)))
+	while not battle_over and frames < last:
+		_battle_frame()
+	if not playback_checked:
+		_playback_frame(true)
+	var ok := String(rp.check.get("state", "")) == _state_sig()
+	print("PLAYBACK END frames=%d %s" % [frames, result_text if battle_over else "RUNNING"])
+	get_tree().quit(0 if ok else 1)
+
+
+func _playback_frame(ended := false) -> void:
+	var cf := int(playback.check.get("frame", -1))
+	if not playback_checked and (frames == cf or (ended and cf >= 0 and frames >= cf)):
+		playback_checked = true
+		var now := _state_sig()
+		var want := String(playback.check.get("state", ""))
+		if now == want:
+			print("PLAYBACK CHECK frame=%d MATCH %s" % [frames, now])
+			_toast("Replay reached the reported moment in the same state.")
+		else:
+			print("PLAYBACK CHECK frame=%d DIFF want: %s got: %s" % [frames, want, now])
+			_toast("Replay DIFFERS from the report at frame %d." % frames, 8000)
+	if not tracing and (ended or frames >= playback.frames.size()):
+		playback = null
+		if not ended:
+			_toast("Replay finished: you have the controls.")
+
+
+# F9: every instance's collision box (red: the SOUL, yellow: has collision events, green:
+# the rest), the fight's state, and the instances under the mouse.
+func _draw_overlay() -> void:
+	var view := Vector2(float(bi.view_xview[0]), float(bi.view_yview[0]))
+	var mouse := get_local_mouse_position()
+	var under: Array = []
+	for ins in vm.instances:
+		if ins.dead:
+			continue
+		var r: Rect2i = vm.bbox(ins)
+		if r.size.x <= 0 or r.size.y <= 0:
+			continue
+		var rr := Rect2((Vector2(r.position) - view) * rec.view_scale, Vector2(r.size) * rec.view_scale)
+		var nm: String = vm.obj_names[ins.obj]
+		var c := Color(0.3, 1, 0.3, 0.5)
+		if nm == "obj_heart":
+			c = Color(1, 0.2, 0.2, 0.95)
+		elif not (vm.collision_targets[ins.obj] as Array).is_empty():
+			c = Color(1, 1, 0, 0.8)
+		draw_rect(rr, c, false, 1.0)
+		if rr.has_point(mouse):
+			under.append(ins)
+	var g: Dictionary = vm.globals
+	var s := func(k: String) -> String: return bi.gm_string(g.get(k, 0.0))
+	var room_name: String = vm.room_names[vm.room] if vm.room >= 0 and vm.room < vm.room_names.size() else "-"
+	var lines := [
+		"frame %d  logic %.1f ms  instances %d%s%s" % [frames, last_logic_us / 1000.0, vm.instances.size(), "  PAUSED" if paused else "", "  REPLAY" if playback != null else ""],
+		"room %s  group %s  seed %s" % [room_name, s.call("battlegroup"), str(recording.seed) if recording != null else "-"],
+		"hp %s/%s  invc %s  km %s  turn %s" % [s.call("hp"), s.call("maxhp"), s.call("invc"), s.call("km"), s.call("turn")],
+		("plot %s  interact %s  entrance %s  view %d,%d" % [s.call("plot"), s.call("interact"), s.call("entrance"), int(view.x), int(view.y)]) if screen == Screen.GAME else ("mnfight %s  myfight %s  bmenuno %s  turntimer %s" % [s.call("mnfight"), s.call("myfight"), s.call("bmenuno"), s.call("turntimer")]),
+		"F10 pause  F11 step  F12 bug report  F9 hide" if screen != Screen.GAME else "F10 pause  F11 step  F9 hide",
+	]
+	draw_rect(Rect2(2, 2, 330, lines.size() * 14 + 6), Color(0, 0, 0, 0.7))
+	for k in lines.size():
+		_small(6, 15 + k * 14, lines[k], Color(1, 1, 0.6) if k == 0 else Color.WHITE)
+	if under.is_empty():
+		return
+	var info: Array = []
+	for ins in under.slice(0, 6):
+		var v: Dictionary = ins.v
+		var al: Array = []
+		for a in ins.alarm.size():
+			if int(ins.alarm[a]) > 0:
+				al.append("a%d=%d" % [a, int(ins.alarm[a])])
+		var spr := int(v["sprite_index"])
+		var sname: String = vm.sprite_names[spr] if spr >= 0 and spr < vm.sprite_names.size() else "-"
+		info.append("%s #%d (%.2f, %.2f) depth %s %s img %.2f %s" % [vm.obj_names[ins.obj], ins.id, float(v["x"]), float(v["y"]), bi.gm_string(v["depth"]), sname, float(v["image_index"]), " ".join(al)])
+	var y0 := 476 - info.size() * 14
+	draw_rect(Rect2(2, y0 - 12, 636, info.size() * 14 + 6), Color(0, 0, 0, 0.75))
+	for k in info.size():
+		_small(6, y0 + k * 14, info[k])
+
+
 # ---------------------------------------------------------------- sweep
 # Runs battles back to back as fast as possible (no waiting for real time) with the
 # scripted input, and prints what each one did and which functions it was missing.
@@ -918,8 +1654,10 @@ func _run_trace(spec: String, replay_path: String, out_path: String) -> void:
 		if idx < 0 and int(ROSTER[k][2].get("bg", -1)) == group:
 			idx = k
 	if idx < 0:
-		print("TRACE no roster battle uses battlegroup %d" % group)
-		return
+		# Any of the game's battle groups can be traced, not only the fight-select ones
+		# (Moldessa, Migosp... appear only in groups the roster doesn't list).
+		trace_entry = ["TRACE", "Group %d" % group, {"bg": group}]
+		idx = TRACE_ONLY
 	if replay_path != "":
 		trace_replay = {}
 		for l in FileAccess.get_file_as_string(replay_path).split("\n"):
@@ -970,7 +1708,7 @@ func _run_trace(spec: String, replay_path: String, out_path: String) -> void:
 		sv.queue_free()
 	var fa := FileAccess.open(out_path, FileAccess.WRITE)
 	fa.store_string("\n".join(trace_lines) + "\n")
-	print("TRACE %s group=%d seed=%d lv=%d frames=%d result=%s -> %s" % [ROSTER[idx][1], group, trace_seed, lv, frames, result_text if battle_over else "RUNNING", out_path])
+	print("TRACE %s group=%d seed=%d lv=%d frames=%d result=%s -> %s" % [(trace_entry if idx == TRACE_ONLY else ROSTER[idx])[1], group, trace_seed, lv, frames, result_text if battle_over else "RUNNING", out_path])
 
 
 func _trace_line(auto) -> void:

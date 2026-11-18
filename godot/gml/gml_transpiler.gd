@@ -14,19 +14,28 @@
 extends RefCounted
 
 const C = preload("res://gml/gml_compiler.gd")
-const VERSION := 9      # bump when the generated code changes
+const VERSION := 11     # bump when the generated code changes
 
 # Built-in variables gml_builtins.global_var answers (read) and set_global_var (write).
 const BI_READ := ["room", "room_width", "room_height", "room_speed", "current_time", "view_xview",
 	"view_yview", "view_wview", "view_hview", "view_current", "keyboard_string", "keyboard_key",
 	"keyboard_lastkey", "fps", "fps_real", "instance_count", "background_color",
 	"background_colour", "mouse_x", "mouse_y", "os_type", "room_persistent", "debug_mode",
-	"view_enabled"]
-const BI_WRITE := ["room_speed", "keyboard_string", "background_color", "background_colour", "room_persistent"]
-const BI_ARRAY_WRITE := ["view_xview", "view_yview", "view_wview", "view_hview", "view_wport",
-	"view_hport", "view_visible", "view_object", "view_angle", "background_visible",
-	"background_index", "background_x", "background_y", "background_hspeed",
-	"background_vspeed", "background_alpha"]
+	"view_enabled", "background_showcolour", "room_first", "room_last", "keyboard_lastchar",
+	"view_visible", "view_xport", "view_yport", "view_wport", "view_hport", "view_hborder",
+	"view_vborder", "view_hspeed", "view_vspeed", "view_object", "view_angle",
+	"background_visible", "background_foreground", "background_index", "background_x",
+	"background_y", "background_htiled", "background_vtiled", "background_hspeed",
+	"background_vspeed", "background_xscale", "background_yscale", "background_blend",
+	"background_alpha"]
+const BI_WRITE := ["room_speed", "keyboard_string", "background_color", "background_colour", "room_persistent",
+	"view_enabled", "background_showcolour"]
+const BI_ARRAY_WRITE := ["view_visible", "view_xview", "view_yview", "view_wview", "view_hview",
+	"view_xport", "view_yport", "view_wport", "view_hport", "view_hborder", "view_vborder",
+	"view_hspeed", "view_vspeed", "view_object", "view_angle", "background_visible",
+	"background_foreground", "background_index", "background_x", "background_y", "background_htiled",
+	"background_vtiled", "background_hspeed", "background_vspeed", "background_xscale",
+	"background_yscale", "background_blend", "background_alpha"]
 # Instance variables whose writes have side effects (vm.inst_set).
 const SPECIAL_SET := ["x", "y", "xprevious", "yprevious", "speed", "direction", "hspeed", "vspeed", "image_index", "image_speed", "image_xscale", "image_yscale", "image_angle", "image_alpha", "gravity", "friction", "depth", "alarm"]
 const SIMPLE_MATH := {"abs": "absf", "floor": "floorf", "ceil": "ceilf", "sin": "sin", "cos": "cos",
@@ -105,6 +114,17 @@ func _scan(n) -> void:
 			_scan(c)
 
 
+# Like _has_value_incdec for a whole statement, except that a statement which is just
+# `x++` / `x--` only counts the operand (an index like a[i++] still counts).
+func _stmt_has_value_incdec(s: Array) -> bool:
+	var kind := int(s[0])
+	if kind == C.S_EXPR and s[1] is Array and int(s[1][0]) == C.E_INCDEC:
+		return _has_value_incdec(s[1][1])
+	if kind == C.S_INCDEC:
+		return _has_value_incdec(s[1])
+	return _has_value_incdec(s.slice(1))
+
+
 func _has_value_incdec(n) -> bool:
 	if not (n is Array) or n.is_empty():
 		return false
@@ -128,8 +148,9 @@ func _block(n, depth: int) -> void:
 
 func _stmt(n: Array, d: int) -> void:
 	var kind := int(n[0])
-	# Statements whose own expressions use ++/-- as a value go to the interpreter.
-	if kind in [C.S_EXPR, C.S_ASSIGN, C.S_VAR, C.S_RETURN] and _has_value_incdec(n.slice(1)):
+	# Statements whose own expressions use ++/-- as a value go to the interpreter. A bare
+	# `x++;` is not a value use: it is translated below as a statement.
+	if kind in [C.S_EXPR, C.S_ASSIGN, C.S_VAR, C.S_RETURN] and _stmt_has_value_incdec(n):
 		_fallback(n, d)
 		return
 	match kind:
@@ -177,7 +198,7 @@ func _stmt(n: Array, d: int) -> void:
 			_guard(g, d + 1)
 			_loop_body(n[1], d + 1, "if %s:\n\tbreak" % _cond(n[2]))
 		C.S_FOR:
-			if _has_value_incdec(n[2]) or _has_value_incdec(n[3]) or _has_value_incdec(n[1]):
+			if _has_value_incdec(n[2]) or (n[3] != null and _stmt_has_value_incdec(n[3])) or (n[1] != null and _stmt_has_value_incdec(n[1])):
 				_fallback(n, d)
 				return
 			if n[1] != null:

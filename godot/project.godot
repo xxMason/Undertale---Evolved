@@ -10,8 +10,10 @@ config_version=5
 
 [application]
 
-config/name="UBE Battle Prototype"
+config/name="Ultimate Battle Engine"
 run/main_scene="res://engine.tscn"
+config/use_custom_user_dir=true
+config/custom_user_dir_name="UltimateBattleEngine"
 config/features=PackedStringArray("4.7")
 
 [display]

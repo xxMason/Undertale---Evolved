@@ -61,10 +61,13 @@ var obj_mask: Array = []
 var obj_depth: Array = []
 var obj_visible: Array = []
 var obj_persistent: Array = []
+var obj_solid: Array = []
 var prof = null                  # name -> usec when profiling
 var collision_targets: Array = []  # object index -> [target object indices], inherited included
 var coll_log = null                # Array of "a>b" collision events this frame, when tracing hits
 var step_no := 0                   # frames stepped so far
+var event_watch = null             # debug menu inspector: the instance whose events are logged
+var event_log: Array = []          # [step_no, code entry] of its last events
 var alarm_log := false             # debugging: print alarms set to non-whole values
 var sprite_names: Array = []
 var sprite_index := {}
@@ -90,6 +93,7 @@ var pending_room := -1
 var draw_hook := Callable()
 var draw_hook_depth := -100000.0
 var game_end_requested := false
+var game_restart_requested := false
 var ret_val = 0.0
 var warned := {}
 var log_lines: Array = []
@@ -110,6 +114,7 @@ class Inst:
 	var dead := false
 	var created := false
 	var born := -1        # step_no of the frame it was created in
+	var drawn := -1       # draw pass number it was last drawn in (see draw_frame)
 
 
 func setup(extracted_dir: String) -> bool:
@@ -161,6 +166,7 @@ func setup(extracted_dir: String) -> bool:
 		obj_depth.append(float(o["depth"]))
 		obj_visible.append(int(o["visible"]) == 1)
 		obj_persistent.append(int(o["persistent"]) == 1)
+		obj_solid.append(int(o.get("solid", 0)) == 1)
 		var ev := {}
 		var targets: Array = []
 		for e in o["events"]:
@@ -183,6 +189,10 @@ func setup(extracted_dir: String) -> bool:
 					all.append(t)
 			p = obj_parent[p]
 			guard += 1
+		# The runner checks collision events in ascending target-object order (measured:
+		# a Moldbygg bullet touching both the SOUL (744) and the top border (760) on the
+		# same frame hits the SOUL first; the data file lists the events descending).
+		all.sort()
 		collision_targets[i] = all
 	var pn: Array = meta.get("path_names", [])
 	for i in pn.size():
@@ -514,7 +524,7 @@ func instance_create(x: float, y: float, obj: int, run_create := true) -> Inst:
 	v["depth"] = obj_depth[obj]
 	v["visible"] = 1.0 if obj_visible[obj] else 0.0
 	v["persistent"] = 1.0 if obj_persistent[obj] else 0.0
-	v["solid"] = 0.0
+	v["solid"] = 1.0 if obj_solid[obj] else 0.0
 	v["path_index"] = -1.0
 	v["path_position"] = 0.0
 	v["path_speed"] = 0.0
@@ -564,18 +574,67 @@ func by_object(list: Array) -> Array:
 		_bo_ver = inst_version
 		_bo_n = list.size()
 		_bo_out = out
+		_bo_runs = _make_runs(out)
 	return out
 
 
+# [start, end, object] for each object's stretch of a by_object list, so a pass can skip
+# every instance of an object that has no handler for its event in one step.
+var _bo_runs: Array = []
+
+
+func runs_of(list: Array) -> Array:
+	if is_same(list, _bo_out):
+		return _bo_runs
+	return _make_runs(list)
+
+
+static func _make_runs(list: Array) -> Array:
+	var runs: Array = []
+	var start := 0
+	for k in range(1, list.size() + 1):
+		if k == list.size() or list[k].obj != list[start].obj:
+			runs.append([start, k, list[start].obj])
+			start = k
+	return runs
+
+
+# Runs one event for every instance in a by_object list, object by object, skipping objects
+# without a handler. Stops once a room change is pending.
+var obj_changed_step := -1   # step_no of the last instance_change
+
+
+func _event_pass(list: Array, type: int, sub: int) -> void:
+	for r in runs_of(list):
+		var found := find_event(r[2], type, sub)
+		if found.is_empty() and obj_changed_step != step_no:
+			continue
+		for k in range(r[0], r[1]):
+			if pending_room != -1:
+				return
+			var i: Inst = list[k]
+			if i.dead:
+				continue
+			if i.obj != r[2]:
+				perform_event(i, type, sub, null)   # changed object earlier this frame
+			elif not found.is_empty():
+				_run_event(i, found[0], found[1], type, sub, null)
+
+
 func _insert_by_depth(inst: Inst) -> void:
+	# The list is always sorted by depth, highest first (depth only changes through
+	# set_depth, which re-inserts), so the first place whose depth is <= d is found by
+	# binary search: the same place a front-to-back scan finds.
 	var d := float(inst.v["depth"])
-	var n := instances.size()
-	var at := n
-	for k in n:
-		if float(instances[k].v["depth"]) <= d:
-			at = k
-			break
-	instances.insert(at, inst)
+	var lo := 0
+	var hi := instances.size()
+	while lo < hi:
+		var mid := (lo + hi) >> 1
+		if float(instances[mid].v["depth"]) <= d:
+			hi = mid
+		else:
+			lo = mid + 1
+	instances.insert(lo, inst)
 
 
 func set_depth(inst: Inst, d: float) -> void:
@@ -698,6 +757,10 @@ func perform_event(inst: Inst, type: int, sub: int, other) -> bool:
 
 func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, other) -> void:
 	var pt := Time.get_ticks_usec() if prof != null else 0
+	if event_watch != null and inst == event_watch:
+		event_log.append([step_no, code])
+		if event_log.size() > 60:
+			event_log.pop_front()
 	var s_self = cur_self
 	var s_other = cur_other
 	var s_obj := cur_event_obj
@@ -1181,9 +1244,12 @@ func _path_step(inst: Inst) -> void:
 	if length <= 0.0:
 		return
 	var here := path_point(p, float(v["path_position"]))
-	var pos: float = float(v["path_position"]) + float(v["path_speed"]) * (float(here[2]) / 100.0) / length
+	var spd := float(v["path_speed"])
+	var pos: float = float(v["path_position"]) + spd * (float(here[2]) / 100.0) / length
 	var endaction := int(float(v.get("path_endaction", 0.0)))
-	if pos >= 1.0 or pos <= 0.0:
+	# A path ends only when it is moved past an end, so a path started at speed 0 (an NPC
+	# waiting for the player, like Toriel in the Ruins) stays on it.
+	if (spd > 0.0 and pos >= 1.0) or (spd < 0.0 and pos <= 0.0):
 		match endaction:
 			0:
 				pos = clampf(pos, 0.0, 1.0)
@@ -1201,8 +1267,16 @@ func _path_step(inst: Inst) -> void:
 				pos = clampf(pos, 0.0, 1.0)
 	v["path_position"] = pos
 	var q := path_point(p, pos)
+	var ox := float(v["x"])
+	var oy := float(v["y"])
 	inst_set(inst, "x", float(v["path_xoff"]) + q[0])
 	inst_set(inst, "y", float(v["path_yoff"]) + q[1])
+	# The runner turns an instance on a path to face the way it moved (Undertale's NPCs pick
+	# their walking sprite from direction: Toriel in the Ruins).
+	var nx := float(v["x"])
+	var ny := float(v["y"])
+	if nx != ox or ny != oy:
+		v["direction"] = f32(fposmod(rad_to_deg(atan2(-(ny - oy), nx - ox)), 360.0))
 
 
 # ---------------------------------------------------------------- frame
@@ -1225,9 +1299,7 @@ func step_frame(keys) -> void:
 	# own instances in creation order), not in the depth-sorted list; measured with the
 	# trace scenario (Froggit: obj_targetchoice's Step runs before obj_target's).
 	var list := by_object(instances)
-	for i in list:
-		if not i.dead and pending_room == -1:
-			perform_event(i, EV_STEP, 1, null)
+	_event_pass(list, EV_STEP, 1)
 	_mark("#begin_step")
 	# Animation (image_index += image_speed, Animation End) runs after Begin Step and before
 	# the alarms, not at the end of the frame: measured with the trace scenario (vaporize dust,
@@ -1255,17 +1327,22 @@ func step_frame(keys) -> void:
 	_mark("#animation")
 	# Alarms: alarm 0 for everyone, then alarm 1, ... An alarm only counts down when the
 	# object (or a parent) has that alarm event, as in the runner.
+	var runs := runs_of(list)
 	for a in 12:
-		for i in list:
-			if i.dead or pending_room != -1:
+		for r in runs:
+			if obj_changed_step != step_no and find_event(r[2], EV_ALARM, a).is_empty():
 				continue
-			var t := float(i.alarm[a])
-			if t > 0.0 and not find_event(i.obj, EV_ALARM, a).is_empty():
-				t -= 1.0
-				i.alarm[a] = t
-				if t <= 0.0:
-					i.alarm[a] = -1.0
-					perform_event(i, EV_ALARM, a, null)
+			for k in range(r[0], r[1]):
+				var i: Inst = list[k]
+				if i.dead or pending_room != -1:
+					continue
+				var t := float(i.alarm[a])
+				if t > 0.0 and not find_event(i.obj, EV_ALARM, a).is_empty():
+					t -= 1.0
+					i.alarm[a] = t
+					if t <= 0.0:
+						i.alarm[a] = -1.0
+						perform_event(i, EV_ALARM, a, null)
 	_mark("#alarms")
 	# Keyboard, key press, key release events.
 	# The key lists are read once; an event that runs may clear keys, so after one has run
@@ -1299,9 +1376,7 @@ func step_frame(keys) -> void:
 			if not i.dead and pending_room == -1:
 				fired = perform_event(i, EV_KEYRELEASE, code, null) or fired
 	list = by_object(instances)
-	for i in list:
-		if not i.dead and pending_room == -1:
-			perform_event(i, EV_STEP, 0, null)
+	_event_pass(list, EV_STEP, 0)
 	_mark("#step")
 	# Motion.
 	for i in instances:
@@ -1333,32 +1408,40 @@ func step_frame(keys) -> void:
 			v["y"] = f32(float(v["y"]) + vs)
 	_mark("#motion")
 	# Outside Room (Other 0): every step the instance's box lies entirely outside the room.
-	for i in by_object(instances):
-		if i.dead or pending_room != -1 or find_event(i.obj, EV_OTHER, 0).is_empty():
+	var olist := by_object(instances)
+	for r in runs_of(olist):
+		if obj_changed_step != step_no and find_event(r[2], EV_OTHER, 0).is_empty():
 			continue
-		var bb := bbox(i)
-		var right := bb.end.x - 1 if bb.size.x > 0 else bb.position.x
-		var bottom := bb.end.y - 1 if bb.size.y > 0 else bb.position.y
-		if right < 0 or bb.position.x > room_width or bottom < 0 or bb.position.y > room_height:
-			perform_event(i, EV_OTHER, 0, null)
-	# Collisions.
-	var ct := Time.get_ticks_usec()
-	list = by_object(instances)
-	for i in list:
-		if i.dead or pending_room != -1:
-			continue
-		for target in collision_targets[i.obj]:
-			_collision_pass(i, int(target))
-	if prof != null:
-		prof["#collisions"] = prof.get("#collisions", 0) + Time.get_ticks_usec() - ct
+		for k in range(r[0], r[1]):
+			_outside_check(olist[k])
 	_mark("#outside")
+	# Collisions (objects without collision events are skipped as a whole).
+	list = by_object(instances)
+	for r in runs_of(list):
+		if obj_changed_step != step_no and (collision_targets[r[2]] as Array).is_empty():
+			continue
+		for k in range(r[0], r[1]):
+			var i: Inst = list[k]
+			if i.dead or pending_room != -1:
+				continue
+			for target in collision_targets[i.obj]:
+				_collision_pass(i, int(target))
+	_mark("#collisions")
 	# End Step.
 	list = by_object(instances)
-	for i in list:
-		if not i.dead and pending_room == -1:
-			perform_event(i, EV_STEP, 2, null)
+	_event_pass(list, EV_STEP, 2)
 	purge_dead()
 	_mark("#end_step")
+
+
+func _outside_check(i: Inst) -> void:
+	if i.dead or pending_room != -1 or find_event(i.obj, EV_OTHER, 0).is_empty():
+		return
+	var bb := bbox(i)
+	var right := bb.end.x - 1 if bb.size.x > 0 else bb.position.x
+	var bottom := bb.end.y - 1 if bb.size.y > 0 else bb.position.y
+	if right < 0 or bb.position.x > room_width or bottom < 0 or bb.position.y > room_height:
+		perform_event(i, EV_OTHER, 0, null)
 
 
 # Time since the previous mark, summed per phase when profiling (--prof).
@@ -1412,7 +1495,33 @@ func _collision_pass(inst: Inst, target_obj: int) -> void:
 				coll_log.append("%s>%s" % [obj_names[inst.obj], obj_names[o.obj]])
 				if OS.has_environment("UBE_COLLDBG"):
 					print("COLLDBG %s x=%s y=%s sx=%s sy=%s ang=%s box=%s | %s box=%s" % [obj_names[inst.obj], inst.v["x"], inst.v["y"], inst.v["image_xscale"], inst.v["image_yscale"], inst.v["image_angle"], bbox(inst), obj_names[o.obj], bbox(o)])
+			# With a solid instance on either side, the runner first puts both back where
+			# they were at the start of the step, runs the event, then lets their speed move
+			# them again unless that collides once more. (Undertale's push rocks are solid:
+			# their event moves the rock and the player by 3, so the player can't walk into
+			# or through them.)
+			var solid := float(inst.v.get("solid", 0.0)) >= 0.5 or float(o.v.get("solid", 0.0)) >= 0.5
+			if solid:
+				_to_previous(inst)
+				_to_previous(o)
 			_run_event(inst, found[0], found[1], EV_COLLISION, target_obj, o)
+			if solid and not inst.dead and not o.dead:
+				for a in [inst, o]:
+					var hs := float(a.v.get("hspeed", 0.0))
+					var vs := float(a.v.get("vspeed", 0.0))
+					if hs != 0.0 or vs != 0.0:
+						inst_set(a, "x", float(a.v["x"]) + hs)
+						inst_set(a, "y", float(a.v["y"]) + vs)
+						if collide(inst, o):
+							_to_previous(a)
+
+
+func _to_previous(a: Inst) -> void:
+	inst_set(a, "x", float(a.v["xprevious"]))
+	inst_set(a, "y", float(a.v["yprevious"]))
+
+
+var _draw_pass := 0
 
 
 func draw_frame() -> void:
@@ -1420,22 +1529,40 @@ func draw_frame() -> void:
 	# The live list is walked, as the runner does: an instance created during a Draw event
 	# at a later place in the list (lower depth) is drawn in the same frame (Sans's Gaster
 	# Blasters, created in his body's Draw at depth -1, take their first Draw step at once).
-	var drawn := {}
+	_draw_pass += 1
+	var pass_no := _draw_pass
 	var k := 0
 	var hook := draw_hook
+	var rec = builtins.canvas if builtins.canvas != null and builtins.canvas.has_method("owner") else null
+	# Rooms: the background colour and back layers first, then tiles among the instances by
+	# depth (a tile goes before instances of the same depth), then the front layers.
+	var tl: Array = builtins.sorted_tiles()
+	var ti := 0
+	var room_draw: bool = builtins.save_dir != ""
+	var seg := -1     # the room's own drawing (tiles, layers) as recorder segments -1, -2, ...
+	if room_draw:
+		if rec != null:
+			rec.owner(seg, Vector2.ZERO)
+			seg -= 1
+		builtins.draw_backgrounds(false)
 	while k < instances.size():
 		var i: Inst = instances[k]
 		k += 1
-		if drawn.has(i):
+		if i.drawn == pass_no:
 			continue
+		if ti < tl.size() and float(tl[ti][8]) >= float(i.v["depth"]):
+			if rec != null:
+				rec.owner(seg, Vector2.ZERO)
+				seg -= 1
+			ti = _draw_tiles_until(tl, ti, float(i.v["depth"]), rec)
 		if hook.is_valid() and float(i.v["depth"]) < draw_hook_depth:
 			hook.call()
 			hook = Callable()
-		drawn[i] = true
+		i.drawn = pass_no
 		if i.dead or float(i.v["visible"]) < 0.5:
 			continue
-		if builtins.canvas != null and builtins.canvas.has_method("owner"):
-			builtins.canvas.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])))
+		if rec != null:
+			rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])))
 		var n0 := instances.size()
 		if not perform_event(i, EV_DRAW, 0, null):
 			builtins.draw_self(i)
@@ -1443,6 +1570,13 @@ func draw_frame() -> void:
 			k = instances.find(i) + 1
 	if hook.is_valid():
 		hook.call()
+	if ti < tl.size() or room_draw:
+		if rec != null:
+			rec.owner(seg, Vector2.ZERO)
+			seg -= 1
+		ti = _draw_tiles_until(tl, ti, -INF, rec)
+		if room_draw:
+			builtins.draw_backgrounds(true)
 	if builtins.canvas != null and builtins.canvas.has_method("gui_begin"):
 		builtins.canvas.gui_begin()
 	var list: Array = instances.duplicate()
@@ -2057,3 +2191,115 @@ func eqn(a, b: float) -> bool:
 
 func cmp(op: String, a, b) -> bool:
 	return truthy(_bin(op, a, b))
+
+
+# ---------------------------------------------------------------- rooms
+
+var room_snapshots := {}   # room index -> {instances, state} saved when a persistent room is left
+var game_started := false  # Game Start has run (the first room loaded)
+
+
+# GameMaker 1.4's room change: Room End for everyone, then the old room is either kept
+# (persistent: its instances wait, untouched, for the player to come back) or its
+# non-persistent instances go, without Destroy events. A new room's placed instances all
+# exist before any Create runs; then each one's Create and creation code, Game Start (first
+# room only), the room's creation code, and Room Start for everyone. A kept room comes back
+# as it was: no Create, no creation code, only Room Start.
+func load_room(r: int) -> bool:
+	for i in instances.duplicate():
+		if not i.dead:
+			perform_event(i, EV_OTHER, 5, null)
+	var keep: Array = []
+	var stay: Array = []
+	for i in instances:
+		if i.dead:
+			by_id.erase(i.id)
+		elif float(i.v.get("persistent", 0.0)) >= 0.5:
+			keep.append(i)
+		else:
+			stay.append(i)
+			by_id.erase(i.id)
+	if room >= 0 and builtins.room_persist.get(room, false):
+		room_snapshots[room] = {"instances": stay, "state": builtins.room_state_save()}
+	instances = keep
+	inst_version += 1
+	var prev := room
+	room = r
+	var name: String = room_names[r] if r >= 0 and r < room_names.size() else ""
+	var rooms: Dictionary = meta["rooms"]
+	if not rooms.has(name):
+		warn_once("room:" + name, "room %s is missing from the extracted data" % name)
+		return false
+	var rd: Dictionary = rooms[name]
+	room_width = int(rd["width"])
+	room_height = int(rd["height"])
+	room_speed = int(rd["speed"])
+	if not builtins.room_persist.has(r):
+		builtins.room_persist[r] = int(rd.get("persistent", 0)) == 1
+	var snap = room_snapshots.get(r) if builtins.room_persist.get(r, false) else null
+	room_snapshots.erase(r)
+	if snap != null:
+		builtins.room_state_restore(snap["state"])
+		for i in snap["instances"]:
+			_insert_by_depth(i)
+			by_id[i.id] = i
+		inst_version += 1
+	else:
+		builtins.room_state_load(rd)
+		var created: Array = []
+		for inst_def in rd["instances"]:
+			if inst_def[0] == null or not obj_index.has(inst_def[0]):
+				continue
+			var o: int = obj_index[inst_def[0]]
+			# A persistent object already present is not placed twice.
+			if obj_persistent[o]:
+				var exists := false
+				for k in instances:
+					if k.obj == o:
+						exists = true
+				if exists:
+					continue
+			var inst = instance_create(float(inst_def[1]), float(inst_def[2]), o, false)
+			inst.v["image_xscale"] = float(inst_def[3])
+			inst.v["image_yscale"] = float(inst_def[4])
+			if inst_def.size() > 8:
+				inst.v["image_angle"] = float(inst_def[7])
+				inst.v["image_blend"] = float(int(inst_def[8]) & 0xFFFFFF)
+			created.append([inst, inst_def[6]])
+		# Every placed instance exists before any Create event runs, as in GameMaker Studio
+		# (measured: Sans's Create, run from obj_battlecontroller's, hides the box borders that
+		# come after the controller in room_battle's list).
+		for c in created:
+			var inst = c[0]
+			if inst.dead:
+				continue
+			perform_event(inst, EV_CREATE, 0, null)
+			if c[1] != null and not inst.dead:
+				run_code(c[1], inst, inst)
+		if not game_started:
+			game_started = true
+			for i in instances.duplicate():
+				if not i.dead:
+					perform_event(i, EV_OTHER, 2, null)
+		if rd["code"] != null:
+			run_code(rd["code"], null, null)
+	for i in instances.duplicate():
+		if not i.dead:
+			perform_event(i, EV_OTHER, 4, null)
+	purge_dead()
+	return true
+
+
+# Room-level per-frame work the runner does after End Step: backgrounds scroll and views
+# follow their objects.
+func room_frame_end() -> void:
+	builtins.step_backgrounds()
+	builtins.update_views()
+
+
+# Tiles and backgrounds behind the instances; tiles are drawn among the instances by depth.
+func _draw_tiles_until(tl: Array, at: int, depth: float, rec) -> int:
+	while at < tl.size() and float(tl[at][8]) >= depth:
+		builtins.draw_tile(tl[at])
+		at += 1
+	return at

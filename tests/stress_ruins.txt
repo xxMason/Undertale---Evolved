@@ -1,0 +1,36 @@
+# Stress cases for the overworld, played by godot/game_bot.gd from Ruins 7:
+#   godot --headless --path godot -- --game --seed 7 --savedir DIR --room room_ruins7 --set plot=9 --frames 20000 --bot ../tests/stress_ruins.txt
+# Random encounters started while a direction key is held, Z mashed while walking (over
+# the save point), and after each one the player must still be able to walk.
+battle fight
+z_until room=room_ruins7 & interact=0 & notext within 600
+# Toriel's first call (walking left into an invisible trigger) comes first: answer it.
+path 100 110
+z_until notext & interact=0 within 900
+path 150 250
+roam lr battle within 4000
+log encounter 1 started while walking
+z_until nobattle & interact=0 within 4000
+where obj_mainchara
+canmove l
+canmove r
+canmove u
+canmove d
+roam lrz battle within 4000
+log encounter 2 started while walking and mashing Z
+z_until nobattle & interact=0 within 4000
+where obj_mainchara
+canmove r     # (right first: the walk may have ended against the left wall)
+canmove l
+roam ud battle within 4000
+log encounter 3 started while walking up and down
+z_until nobattle & interact=0 within 4000
+canmove u
+canmove d
+path 210 168
+roam udz text within 600
+log the save point read while walking
+z_until notext & interact=0 within 600
+canmove l
+canmove r
+log stress done

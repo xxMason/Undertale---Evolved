@@ -97,6 +97,127 @@ Windowed, LV 20, 900 frames, worst game frame (budget 33 ms): Asgore 16.6 ms, Sa
 Mouse control (menus and battle buttons) is implemented but has only been checked by
 running the code, not by clicking through it by hand.
 
+### The game from its first room (2026-11-18)
+
+With scripted keys, a fixed seed and a throwaway save folder, the real game runs:
+- intro story and title menu;
+- naming;
+- Flowey's meeting and his battle (Toriel's rescue inside it);
+- Toriel's talk back in the room, which needs the persistent room to come back with its
+  pending alarm;
+- the walk into `room_ruins1`;
+- saving at the save point.
+
+`file0`, `file9` and `undertale.ini` are written in the engine's own folder in the game's
+format. A fresh start then shows Continue with the saved name, LV, time and room, and
+loads at the save point.
+
+Screenshots at each step match the real game's layout:
+- intro picture at 2x;
+- menu, naming screen, Flowey's text box;
+- the Ruins tiles.
+
+Two identical runs give byte-identical save files. All 35 Ruins rooms (Ruins,
+Toriel's house, basement, exit) load after a normal boot and run for 150 frames with no
+missing function and no script warning. The only message is `snd_fall2`, which isn't in
+the real game's folder either.
+
+### Ruins walkthrough bot (2026-11-18)
+
+`godot/game_bot.gd` plays `tests/walkthrough_ruins.txt` from the first room, through the
+whole Ruins and Toriel's house, to Snowdin's first room. It checks the story counter
+(`global.plot`) in every room:
+
+| Room | What is checked | plot after |
+|---|---|---|
+| area1_2 | Flowey, his battle, Toriel's rescue and talk | 1 |
+| ruins1 | Toriel leads up the stairs and meets the door marker | 2 |
+| ruins2 | Toriel shows the floor switches | 3 |
+| ruins3 | the two marked wall switches; Toriel walks ahead each time | 5 |
+| ruins4 | Toriel's talk, the Dummy battle (Talk), her walk to the door | 5.5, 6, 7 |
+| ruins5 | Toriel walks to the spikes and leads across them by the hand | 7.5, 8 |
+| ruins6, 7, 7A | Toriel's calls; the candy dish (item 1); an encounter started while walking | 9.x |
+| ruins8, 10 | falling through the floor (precise hole masks) | |
+| ruins9 | the push rock (flag 35) and the calls in the corridor | |
+| ruins11 | both push rocks (flags 31, 32); the talking rock, asked again after it slides back | flag 33 |
+| ruins12A, 12, 12B | save point; Napstablook (Cheer) and his exit; the spider bake sale (donut) | 11 |
+| ruins13, 14 | Loox (Don't Pick On); falling to the switch below and back up | 13 |
+| ruins15A-D | the three marked switches ("Press it?" Yes) | 14, 15, 16 |
+| ruins16, 19 | Toriel finds you and takes you home; save point | 17 |
+| torhouse1, 3, 2 | Toriel shows your room; asking her how to leave the Ruins | 18, 19, 19.9, 20, 21 |
+| basement1-4 | Toriel stops you three times, then her fight (spared) | 22, 23, 24, 25 |
+| basement5, ruinsexit | the corridor, Flowey's talk at the exit | 28 |
+| tundra1 | the player can walk in Snowdin's first room | 30 |
+
+Random encounters are fought on the way (sparing with the right ACT). The run ends in
+`room_tundra1` with plot 30.
+
+`tests/stress_ruins.txt` (Ruins 7): three random encounters started while walking (one
+while mashing Z), and the save point read mid-walk. The player can walk in every
+direction after each. No movement bug turned up.
+
+Bugs it found, now fixed:
+- **A path started at speed 0 was ended at once.** Toriel starts her walks that way
+  and speeds up when the player comes near. So she never moved:
+  - in ruins1 she stayed at the bottom, so plot stayed 1;
+  - in ruins5 she never reached the spikes, so the room could not be finished.
+- **NPCs on paths faced down while walking.** The runner now sets `direction` from the
+  path movement, as GameMaker does, so `scr_npcdir` picks the walking sprite.
+- **The player sprite jittered while the view followed it.** All smoothing now rounds in
+  screen pixels.
+
+Found while playing by hand, now fixed:
+- **Objects never got their "solid" flag** (every instance started with `solid = 0`). On top
+  of that, collisions with solid objects didn't do what GameMaker does: put both instances
+  back where they were at the start of the step before the event runs. Together these let
+  the player walk into and through push rocks (Ruins 11): the rock's event moves rock and
+  player by 3, on top of the player's own walk. Now the player pushes the rock at its speed.
+  All 51 saved battle traces still match.
+- **Trimmed backgrounds were drawn shifted.** Some background images are stored smaller
+  than their real size: Toriel's stairs are 138x96 inside 320x240. The extractor saved
+  only the trimmed part, so the tiled stairs in her hall started in the wrong place. They
+  are now saved at full size (extract version 2). `play.bat` asks for `setup.bat` again
+  when the extracted data is older.
+
+Found by the longer walkthrough, all in the bot rather than the engine:
+- Ruins 14's floor gives way at six small spots (`spr_holemask3`, 4x4 pixels each), and
+  the floor below is split in three by walls. You land under the spot you stepped on;
+  the switch is under the middle ones.
+- Toriel's stairs have a precise mask; the route planner now tests those by pixel.
+- Some switches ask "Press it?"; `use` now fails if nothing was said, and tries the other
+  sides of an object it can't reach from below.
+
+Checked and left as the original does it: in Ruins 3, while Toriel waits by the spikes
+(before her "Splendid!"), she shows a walking frame. Her Begin Step sets `image_index = 0`
+and the frame then advances by `image_speed` 1 before drawing, the event order measured in
+the battle traces.
+
+Not yet done:
+- no frame-by-frame comparison with the real game for the overworld;
+- Snowdin onward isn't in the walkthrough yet;
+- the walkthrough takes the pacifist route only (no kills, no Toriel fight to the end);
+- overworld F12 saves the save files but no replay.
+
+### Testing tools (2026-11-18)
+
+- **Bug report replays** (F12, `--playback`). Fights recorded with auto-play at LV 20
+  (Napstablook to frame 400, Undyne and Muffet to frame 1400) and at LV 1 (Asriel through
+  his game-over, frame 1000) replay to the identical state. The same Asriel recording with
+  a different seed is caught (`DIFF`, exit 1). One caution from writing the test: some
+  fights reach the same state whatever the seed, because their random numbers only change
+  how things are drawn, so the tampered-seed test uses Asriel. `run-tests.ps1` checks both
+  cases.
+- **Mod manifests.** `tests/mods` fixtures:
+  - correct load order for a mod that requires another;
+  - a switched-off mod skipped;
+  - three mods refused, each with its own message: a bad id, a too-new engine, a missing
+    dependency.
+- **`scripts/check.ps1`** (pre-commit, 27 s): the four saved traces, the collision probe,
+  a replay and the mod fixtures, all passing.
+- **Not yet checked by hand on screen:** the Setup panel's window-size, scaling and
+  fullscreen options, and F10/F11 pause and step. The overlay and the Setup panel were
+  checked by screenshot only.
+
 ### Frame-by-frame comparison with the real game (2026-11-17)
 
 `scripts\trace-compare.ps1` (see "Matching the real game" in `GODOT_ENGINE.md`) ran 43
@@ -110,8 +231,16 @@ Greater Dog, Papyrus, Gyftrot, Snowdrake, Ice Cap, Jerry, Aaron, Temmie, Woshua,
 Mad Dummy, Undyne, Royal Guards, Tsunderplane, Vulkin, Pyrope, Muffet, Madjick, Knight
 Knight, Final Froggit, Astigmatism, Whimsalot, Mettaton EX, Glad Dummy, Mettaton NEO, Sans
 (through the game over), Asgore, Parsnik, Glyde, So Sorry, Undyne the Undying (through the
-game-over heart shards) and Asriel. Not compared yet: Migosp, Moldessa, Migospel,
-Chilldrake, Moldbygg.
+game-over heart shards) and Asriel.
+
+Added 2026-11-18, using the real game's own monster groups (any group number now runs in
+Godot, not just roster entries): Moldsmal + Migosp (11), Migosp + Vegetoid (12), Final
+Froggit + Migospel (121), Moldessa x2 (123), Moldessa + Migospel (128), Parsnik + Migospel
+(129), Moldsmal + Moldbygg (42) and Woshua + Moldbygg (55), 51 battles in all. All agree
+on every frame. Moldbygg's fight found one more runner rule: when a bullet touches
+the SOUL and a box border on the same frame, the collision events run in ascending
+target-object order (SOUL first, so it hits), not in the order the data file lists them.
+Not compared yet: Chilldrake (needs a story flag the trace scenario doesn't set).
 
 The last two drifts were the runner's direction/speed conversion, measured with
 `ube_motion_probe`: single-precision pi and cos/sin, and hspeed, vspeed and speed snapped
@@ -137,6 +266,13 @@ battle box no longer comes apart while it resizes (seen on Undyne at half-way fr
 Monster deaths: the dust (hundreds of one-pixel instances) made frames take 25-60 ms;
 caching the object-order list and each collision target's instances brought the worst
 frame of the Dummy's death under 20 ms (a frame has 33 ms), with all traces unchanged.
+A second pass (2026-11-18): event passes skip whole objects that have no handler for that
+event, keyboard key lists are read once per frame, the depth list uses a binary insert,
+plain unscaled sprites take a direct draw path, and the translator now translates
+`x++;`-style statements it used to hand to the interpreter (the text writer went from
+7 ms a frame to 0.5 ms). Dust frames are now about 9-15 ms with profiling on; a Dummy
+sweep's total logic time went from 1.6 s to 0.76 s. What remains is spread over ~600
+dust instances (their Draw events, motion and the outside-room check).
 
 What the comparisons found and fixed (each measured in the real game first, the
 collision rules with `ube_coll_probe`, whose 49 results now all agree):

@@ -10,6 +10,9 @@ var audio_root: Node = null
 var keys
 var rng = preload("res://gml/gml_random.gd").new()   # GameMaker's own generator
 var fixed_seed := -1     # tests: randomize() re-seeds with this instead
+# Replays: when >= 0 the clock (current_time, get_timer) is game frames, not real time,
+# and randomize() draws its new seed from the generator, so a recorded fight replays exactly.
+var clock_ms := -1.0
 
 var tex_cache := {}       # "spr:frame" -> Texture2D
 var mask_cache := {}      # "spr:frame" -> PackedByteArray
@@ -42,6 +45,7 @@ var unknown := {}
 
 func _init(v) -> void:
 	vm = v
+	room_state_reset()
 
 
 # ---------------------------------------------------------------- helpers
@@ -160,15 +164,7 @@ func global_var(name: String):
 		"room_speed":
 			return float(vm.room_speed)
 		"current_time":
-			return float(Time.get_ticks_msec() - start_ms)
-		"view_xview":
-			return [view_xview]
-		"view_yview":
-			return [view_yview]
-		"view_wview":
-			return [view_wview]
-		"view_hview":
-			return [view_hview]
+			return floorf(clock_ms) if clock_ms >= 0.0 else float(Time.get_ticks_msec() - start_ms)
 		"view_current":
 			return 0.0
 		"keyboard_string":
@@ -186,11 +182,23 @@ func global_var(name: String):
 		"os_type":
 			return 0.0
 		"room_persistent":
-			return 0.0
+			return 1.0 if room_persist.get(vm.room, false) else 0.0
 		"debug_mode":
 			return 0.0
 		"view_enabled":
-			return 1.0
+			# Battles always answered 1 here; rooms answer what they say.
+			return 1.0 if views_on or save_dir == "" else 0.0
+		"background_showcolour":
+			return 1.0 if show_colour else 0.0
+		"room_first", "room_last":
+			var order: Array = vm.meta.get("room_order", [])
+			if order.is_empty():
+				return 0.0
+			return float(vm.room_names.find(order[0] if name == "room_first" else order[order.size() - 1]))
+		"keyboard_lastchar":
+			return ""
+	if room_arr.has(name):
+		return [room_arr[name]]
 	return null
 
 
@@ -206,25 +214,23 @@ func set_global_var(name: String, val) -> bool:
 			background_color = float(val)
 			return true
 		"room_persistent":
+			room_persist[vm.room] = float(val) >= 0.5
+			return true
+		"view_enabled":
+			views_on = float(val) >= 0.5
+			return true
+		"background_showcolour":
+			show_colour = float(val) >= 0.5
 			return true
 	return false
 
 
 func set_global_array(name: String, a: int, val) -> bool:
-	match name:
-		"view_xview":
-			if a >= 0 and a < 8:
-				view_xview[a] = float(val)
-			return true
-		"view_yview":
-			if a >= 0 and a < 8:
-				view_yview[a] = float(val)
-			return true
-		"view_wview", "view_hview", "view_wport", "view_hport", "view_visible", "view_object", "view_angle":
-			return true
-		"background_visible", "background_index", "background_x", "background_y", "background_hspeed", "background_vspeed", "background_alpha":
-			return true
-	return false
+	if not room_arr.has(name):
+		return false
+	if a >= 0 and a < 8:
+		room_arr[name][a] = float(val)
+	return true
 
 
 func view_array(name: String):
@@ -251,6 +257,11 @@ func _draw_sprite_ext(spr: int, frame: int, x: float, y: float, xs: float, ys: f
 	var si = vm._spr(spr)
 	var xo := float(si[3])
 	var yo := float(si[4])
+	if xs == 1.0 and ys == 1.0 and angle == 0.0:
+		# Same pixels as the transformed draw (whole-pixel origin), one recorded op instead
+		# of three: matters with hundreds of dust pixels.
+		canvas.draw_texture(tex, Vector2(x - xo, y - yo), col(color, alpha))
+		return
 	canvas.draw_set_transform(Vector2(x, y), -deg_to_rad(angle), Vector2(xs, ys))
 	canvas.draw_texture(tex, Vector2(-xo, -yo), col(color, alpha))
 	canvas.draw_set_transform(Vector2.ZERO)
@@ -802,37 +813,48 @@ const FN_METHODS := {
 		"room_goto_previous": "_f_room_goto_previous",
 		"room_restart": "_f_room_restart",
 		"game_end": "_f_game_end",
-		"game_restart": "_f_game_end",
+		"game_restart": "_f_game_restart",
 		"room_set_persistent": "_f_room_set_persistent",
 		"room_exists": "_f_room_set_persistent",
-		"ini_open": "_f_ini_open",
-		"ini_close": "_f_ini_open",
-		"ini_write_real": "_f_ini_open",
-		"ini_write_string": "_f_ini_open",
-		"ini_open_from_string": "_f_ini_open",
-		"ini_section_delete": "_f_ini_open",
-		"ini_key_delete": "_f_ini_open",
-		"ini_read_real": "_f_ini_read_real",
-		"ini_read_string": "_f_ini_read_string",
-		"ini_section_exists": "_f_ini_section_exists",
-		"ini_key_exists": "_f_ini_section_exists",
-		"file_exists": "_f_file_exists",
-		"file_text_open_read": "_f_file_exists",
-		"file_text_open_write": "_f_file_exists",
-		"file_text_open_append": "_f_file_exists",
-		"file_text_close": "_f_file_exists",
-		"file_text_write_string": "_f_file_exists",
-		"file_text_write_real": "_f_file_exists",
-		"file_text_writeln": "_f_file_exists",
-		"file_text_readln": "_f_file_exists",
-		"file_text_eof": "_f_file_exists",
-		"file_delete": "_f_file_exists",
-		"file_rename": "_f_file_exists",
-		"file_copy": "_f_file_exists",
-		"directory_exists": "_f_file_exists",
-		"directory_create": "_f_file_exists",
-		"file_text_read_string": "_f_file_text_read_string",
-		"file_text_read_real": "_f_file_text_read_real",
+		"ini_open": "_f_ini_open2",
+		"ini_close": "_f_ini_open2",
+		"ini_write_real": "_f_ini_open2",
+		"ini_write_string": "_f_ini_open2",
+		"ini_open_from_string": "_f_ini_open2",
+		"ini_section_delete": "_f_ini_open2",
+		"ini_key_delete": "_f_ini_open2",
+		"ini_read_real": "_f_ini_open2",
+		"ini_read_string": "_f_ini_open2",
+		"ini_section_exists": "_f_ini_open2",
+		"ini_key_exists": "_f_ini_open2",
+		"file_exists": "_f_file2",
+		"file_delete": "_f_file2",
+		"file_copy": "_f_file2",
+		"file_rename": "_f_file2",
+		"directory_exists": "_f_file2",
+		"directory_create": "_f_file2",
+		"file_text_open_read": "_f_file2",
+		"file_text_open_write": "_f_file2",
+		"file_text_open_append": "_f_file2",
+		"file_text_close": "_f_file2",
+		"file_text_write_string": "_f_file2",
+		"file_text_write_real": "_f_file2",
+		"file_text_writeln": "_f_file2",
+		"file_text_readln": "_f_file2",
+		"file_text_eof": "_f_file2",
+		"file_text_read_string": "_f_file2",
+		"file_text_read_real": "_f_file2",
+		"tile_layer_shift": "_f_tile_layer_shift",
+		"tile_layer_hide": "_f_tile_layer_hide",
+		"tile_layer_show": "_f_tile_layer_hide",
+		"tile_layer_delete": "_f_tile_layer_delete",
+		"tile_add": "_f_tile_add",
+		"tile_delete": "_f_tile_delete",
+		"tile_exists": "_f_tile_exists",
+		"room_next": "_f_room_next",
+		"room_previous": "_f_room_next",
+		"window_get_x": "_f_window_get_zero",
+		"window_get_y": "_f_window_get_zero",
 		"steam_initialised": "_f_steam_initialised",
 		"steam_stats_ready": "_f_steam_initialised",
 		"steam_file_exists": "_f_steam_initialised",
@@ -1163,6 +1185,8 @@ func _f_choose(name: String, a: Array, ctx: Dictionary):
 func _f_randomize(name: String, a: Array, ctx: Dictionary):
 	if fixed_seed >= 0:
 		rng.set_seed(fixed_seed)
+	elif clock_ms >= 0.0:
+		rng.set_seed(rng.next() & 0x7FFFFFFF)
 	else:
 		rng.set_seed(int(Time.get_ticks_usec() & 0x7FFFFFFF))
 	return 0.0
@@ -1515,6 +1539,7 @@ func _f_instance_change(name: String, a: Array, ctx: Dictionary):
 	if me2 != null:
 		me2.obj = int(_n(a, 0))
 		vm.inst_version += 1
+		vm.obj_changed_step = vm.step_no
 		if _n(a, 1) > 0.5:
 			vm.perform_event(me2, vm.EV_CREATE, 0, null)
 	return 0.0
@@ -2567,43 +2592,15 @@ func _f_game_end(name: String, a: Array, ctx: Dictionary):
 	return 0.0
 
 
+func _f_game_restart(name: String, a: Array, ctx: Dictionary):
+	# The host starts the game again from its first room (battles: same as game_end).
+	vm.game_end_requested = true
+	vm.game_restart_requested = true
+	return 0.0
+
+
 func _f_room_set_persistent(name: String, a: Array, ctx: Dictionary):
 	return 1.0
-	return 0.0
-
-
-func _f_ini_open(name: String, a: Array, ctx: Dictionary):
-	return 0.0
-	return 0.0
-
-
-func _f_ini_read_real(name: String, a: Array, ctx: Dictionary):
-	return _n(a, 2)
-	return 0.0
-
-
-func _f_ini_read_string(name: String, a: Array, ctx: Dictionary):
-	return _a(a, 2, "")
-	return 0.0
-
-
-func _f_ini_section_exists(name: String, a: Array, ctx: Dictionary):
-	return 0.0
-	return 0.0
-
-
-func _f_file_exists(name: String, a: Array, ctx: Dictionary):
-	return 0.0
-	return 0.0
-
-
-func _f_file_text_read_string(name: String, a: Array, ctx: Dictionary):
-	return ""
-	return 0.0
-
-
-func _f_file_text_read_real(name: String, a: Array, ctx: Dictionary):
-	return 0.0
 	return 0.0
 
 
@@ -2658,7 +2655,7 @@ func _f_display_get_height(name: String, a: Array, ctx: Dictionary):
 
 
 func _f_get_timer(name: String, a: Array, ctx: Dictionary):
-	return float(Time.get_ticks_usec())
+	return floorf(clock_ms * 1000.0) if clock_ms >= 0.0 else float(Time.get_ticks_usec())
 	return 0.0
 
 
@@ -2724,3 +2721,565 @@ func _f_strlen(name: String, a: Array, ctx: Dictionary):
 	return 0.0
 
 
+
+# ---------------------------------------------------------------- rooms: views, backgrounds, tiles
+# Room state the overworld needs (battles only used view 0's position). vm.load_room fills
+# it from the room's data; the arrays are GameMaker's 8 views and 8 background layers.
+
+const VIEW_KEYS := ["view_visible", "view_xview", "view_yview", "view_wview", "view_hview",
+	"view_xport", "view_yport", "view_wport", "view_hport", "view_hborder", "view_vborder",
+	"view_hspeed", "view_vspeed", "view_object", "view_angle"]
+const BG_KEYS := ["background_visible", "background_foreground", "background_index",
+	"background_x", "background_y", "background_htiled", "background_vtiled",
+	"background_hspeed", "background_vspeed", "background_xscale", "background_yscale",
+	"background_blend", "background_alpha"]
+
+var room_arr := {}          # name -> Array of 8 (views and backgrounds)
+var views_on := false
+var show_colour := true
+# Tiles: [id, background, x, y, left, top, width, height, depth, xscale, yscale, colour,
+# alpha, visible], kept sorted deepest first.
+var tiles: Array = []
+var tiles_sorted := true
+var room_persist := {}     # room index -> room_persistent set at run time
+var next_tile_id := 10000000
+
+
+func room_state_reset() -> void:
+	for k in VIEW_KEYS + BG_KEYS:
+		var a: Array = []
+		a.resize(8)
+		a.fill(0.0)
+		room_arr[k] = a
+	for v in 8:
+		room_arr["view_wview"][v] = 640.0
+		room_arr["view_hview"][v] = 480.0
+		room_arr["view_wport"][v] = 640.0
+		room_arr["view_hport"][v] = 480.0
+		room_arr["view_object"][v] = -4.0
+		room_arr["view_hspeed"][v] = -1.0
+		room_arr["view_vspeed"][v] = -1.0
+		room_arr["background_index"][v] = -1.0
+		room_arr["background_xscale"][v] = 1.0
+		room_arr["background_yscale"][v] = 1.0
+		room_arr["background_blend"][v] = 16777215.0
+		room_arr["background_alpha"][v] = 1.0
+	# The battle code and the host read these directly.
+	view_xview = room_arr["view_xview"]
+	view_yview = room_arr["view_yview"]
+	view_wview = room_arr["view_wview"]
+	view_hview = room_arr["view_hview"]
+	views_on = false
+	show_colour = true
+	tiles = []
+	tiles_sorted = true
+
+
+# Called by vm.load_room with the room's extracted data (see extract_engine.csx).
+func room_state_load(rd: Dictionary) -> void:
+	room_state_reset()
+	views_on = int(rd.get("views_enabled", 0)) == 1
+	show_colour = int(rd.get("show_colour", 1)) == 1
+	background_color = float(int(rd.get("colour", 0)) & 0xFFFFFF)
+	var vs: Array = rd.get("views", [])
+	for k in mini(vs.size(), 8):
+		var v: Array = vs[k]
+		room_arr["view_visible"][k] = float(v[0])
+		room_arr["view_xview"][k] = float(v[1])
+		room_arr["view_yview"][k] = float(v[2])
+		room_arr["view_wview"][k] = float(v[3])
+		room_arr["view_hview"][k] = float(v[4])
+		room_arr["view_xport"][k] = float(v[5])
+		room_arr["view_yport"][k] = float(v[6])
+		room_arr["view_wport"][k] = float(v[7])
+		room_arr["view_hport"][k] = float(v[8])
+		room_arr["view_hborder"][k] = float(v[9])
+		room_arr["view_vborder"][k] = float(v[10])
+		room_arr["view_hspeed"][k] = float(v[11])
+		room_arr["view_vspeed"][k] = float(v[12])
+		room_arr["view_object"][k] = float(vm.obj_index.get(v[13], -4)) if v[13] != null else -4.0
+	var bs: Array = rd.get("backgrounds", [])
+	for k in mini(bs.size(), 8):
+		var b: Array = bs[k]
+		room_arr["background_visible"][k] = float(b[0])
+		room_arr["background_foreground"][k] = float(b[1])
+		room_arr["background_index"][k] = float(vm.consts.get(b[2], -1.0)) if b[2] != null else -1.0
+		room_arr["background_x"][k] = float(b[3])
+		room_arr["background_y"][k] = float(b[4])
+		room_arr["background_htiled"][k] = float(b[5])
+		room_arr["background_vtiled"][k] = float(b[6])
+		room_arr["background_hspeed"][k] = float(b[7])
+		room_arr["background_vspeed"][k] = float(b[8])
+		if int(b[9]) == 1:
+			# Stretched: scaled to fill the room.
+			var bgi := int(room_arr["background_index"][k])
+			var tex := bg_texture(bgi)
+			if tex != null:
+				room_arr["background_xscale"][k] = float(vm.room_width) / tex.get_width()
+				room_arr["background_yscale"][k] = float(vm.room_height) / tex.get_height()
+	for t in rd.get("tiles", []):
+		var bgi2 := int(vm.consts.get(t[0], -1.0)) if t[0] != null else -1
+		var c := int(t[11])
+		tiles.append([int(t[8]), bgi2, float(t[1]), float(t[2]), float(t[3]), float(t[4]), float(t[5]), float(t[6]), float(t[7]), float(t[9]), float(t[10]), float(c & 0xFFFFFF), float((c >> 24) & 255) / 255.0, true])
+	tiles_sorted = false
+
+
+func sorted_tiles() -> Array:
+	if not tiles_sorted:
+		# Deepest first; equal depths keep their room order.
+		var idx: Array = []
+		for k in tiles.size():
+			idx.append([tiles[k][8], k])
+		idx.sort_custom(func(p, q): return p[0] > q[0] or (p[0] == q[0] and p[1] < q[1]))
+		var out: Array = []
+		for p in idx:
+			out.append(tiles[p[1]])
+		tiles = out
+		tiles_sorted = true
+	return tiles
+
+
+func draw_tile(t: Array) -> void:
+	if not t[13] or canvas == null:
+		return
+	var tex := bg_texture(int(t[1]))
+	if tex == null:
+		return
+	var dst := Rect2(t[2], t[3], t[6] * t[9], t[7] * t[10])
+	canvas.draw_texture_rect_region(tex, dst, Rect2(t[4], t[5], t[6], t[7]), col(t[11], t[12]))
+
+
+# Background colour and the background layers (fg = false: behind everything; true: in front).
+func draw_backgrounds(fg: bool) -> void:
+	if canvas == null:
+		return
+	if not fg and show_colour:
+		var vx: float = room_arr["view_xview"][0] if views_on else 0.0
+		var vy: float = room_arr["view_yview"][0] if views_on else 0.0
+		var vw: float = room_arr["view_wview"][0] if views_on else float(vm.room_width)
+		var vh: float = room_arr["view_hview"][0] if views_on else float(vm.room_height)
+		canvas.draw_rect(Rect2(vx, vy, maxf(vw, vm.room_width), maxf(vh, vm.room_height)), col(background_color))
+	for k in 8:
+		if float(room_arr["background_visible"][k]) < 0.5 or (float(room_arr["background_foreground"][k]) >= 0.5) != fg:
+			continue
+		var tex := bg_texture(int(room_arr["background_index"][k]))
+		if tex == null:
+			continue
+		var x: float = room_arr["background_x"][k]
+		var y: float = room_arr["background_y"][k]
+		var w: float = tex.get_width() * float(room_arr["background_xscale"][k])
+		var h: float = tex.get_height() * float(room_arr["background_yscale"][k])
+		var c := col(room_arr["background_blend"][k], float(room_arr["background_alpha"][k]))
+		var ht := float(room_arr["background_htiled"][k]) >= 0.5
+		var vt := float(room_arr["background_vtiled"][k]) >= 0.5
+		var x0 := x
+		var x1 := x + w
+		var y0 := y
+		var y1 := y + h
+		if ht and w > 0:
+			x0 = x - ceilf(x / w) * w
+			x1 = float(vm.room_width) + w
+		if vt and h > 0:
+			y0 = y - ceilf(y / h) * h
+			y1 = float(vm.room_height) + h
+		var yy := y0
+		while yy < y1:
+			var xx := x0
+			while xx < x1:
+				canvas.draw_texture_rect(tex, Rect2(xx, yy, w, h), false, c)
+				xx += w
+			yy += h
+
+
+# Backgrounds scroll by their speeds once a step.
+func step_backgrounds() -> void:
+	for k in 8:
+		var hs: float = room_arr["background_hspeed"][k]
+		var vs: float = room_arr["background_vspeed"][k]
+		if hs != 0.0:
+			room_arr["background_x"][k] = float(room_arr["background_x"][k]) + hs
+		if vs != 0.0:
+			room_arr["background_y"][k] = float(room_arr["background_y"][k]) + vs
+
+
+# Views that follow an object (GameMaker 1.4's rule): keep the instance at least hborder /
+# vborder from the view's edges, moving at most hspeed / vspeed (-1: no limit), and stay
+# inside the room.
+func update_views() -> void:
+	if not views_on:
+		return
+	for k in 8:
+		if float(room_arr["view_visible"][k]) < 0.5:
+			continue
+		var target := float(room_arr["view_object"][k])
+		if target < 0.0:
+			continue
+		var inst = vm.first_of(target, {"self": null, "other": null})
+		if inst == null:
+			continue
+		var ix := float(inst.v["x"])
+		var iy := float(inst.v["y"])
+		var vx: float = room_arr["view_xview"][k]
+		var vy: float = room_arr["view_yview"][k]
+		var vw: float = room_arr["view_wview"][k]
+		var vh: float = room_arr["view_hview"][k]
+		var hb: float = room_arr["view_hborder"][k]
+		var vb: float = room_arr["view_vborder"][k]
+		var nx := vx
+		var ny := vy
+		if 2.0 * hb >= vw:
+			nx = ix - vw / 2.0
+		elif ix - hb < vx:
+			nx = ix - hb
+		elif ix + hb > vx + vw:
+			nx = ix + hb - vw
+		if 2.0 * vb >= vh:
+			ny = iy - vh / 2.0
+		elif iy - vb < vy:
+			ny = iy - vb
+		elif iy + vb > vy + vh:
+			ny = iy + vb - vh
+		var hs: float = room_arr["view_hspeed"][k]
+		var vsp: float = room_arr["view_vspeed"][k]
+		if hs >= 0.0:
+			nx = clampf(nx, vx - hs, vx + hs)
+		if vsp >= 0.0:
+			ny = clampf(ny, vy - vsp, vy + vsp)
+		nx = clampf(nx, 0.0, maxf(0.0, vm.room_width - vw))
+		ny = clampf(ny, 0.0, maxf(0.0, vm.room_height - vh))
+		room_arr["view_xview"][k] = nx
+		room_arr["view_yview"][k] = ny
+
+
+func _f_tile_layer_shift(name: String, a: Array, ctx: Dictionary):
+	var d := _n(a, 0)
+	for t in tiles:
+		if t[8] == d:
+			t[2] += _n(a, 1)
+			t[3] += _n(a, 2)
+	return 0.0
+
+
+func _f_tile_layer_hide(name: String, a: Array, ctx: Dictionary):
+	var d := _n(a, 0)
+	var show := name == "tile_layer_show"
+	for t in tiles:
+		if t[8] == d:
+			t[13] = show
+	return 0.0
+
+
+func _f_tile_layer_delete(name: String, a: Array, ctx: Dictionary):
+	var d := _n(a, 0)
+	tiles = tiles.filter(func(t): return t[8] != d)
+	return 0.0
+
+
+func _f_tile_add(name: String, a: Array, ctx: Dictionary):
+	next_tile_id += 1
+	tiles.append([next_tile_id, int(_n(a, 0)), _n(a, 5), _n(a, 6), _n(a, 1), _n(a, 2), _n(a, 3), _n(a, 4), _n(a, 7), 1.0, 1.0, 16777215.0, 1.0, true])
+	tiles_sorted = false
+	return float(next_tile_id)
+
+
+func _f_tile_delete(name: String, a: Array, ctx: Dictionary):
+	var id := int(_n(a, 0))
+	tiles = tiles.filter(func(t): return t[0] != id)
+	return 0.0
+
+
+func _f_tile_exists(name: String, a: Array, ctx: Dictionary):
+	var id := int(_n(a, 0))
+	for t in tiles:
+		if t[0] == id:
+			return 1.0
+	return 0.0
+
+
+func _f_room_next(name: String, a: Array, ctx: Dictionary):
+	var order: Array = vm.meta.get("room_order", [])
+	var r := int(_n(a, 0))
+	var nm: String = vm.room_names[r] if r >= 0 and r < vm.room_names.size() else ""
+	var k := order.find(nm)
+	if k < 0:
+		return -1.0
+	k += 1 if name == "room_next" else -1
+	if k < 0 or k >= order.size():
+		return -1.0
+	return float(vm.room_names.find(order[k]))
+
+
+func _f_window_get_zero(name: String, a: Array, ctx: Dictionary):
+	return 0.0
+
+
+# ---------------------------------------------------------------- the game's save files
+# Undertale's own files (file0, file9, undertale.ini, config.ini...) live in the engine's
+# data folder, never in %LOCALAPPDATA%\UNDERTALE: only the file name is kept, any folder in
+# it is dropped, so nothing can be written anywhere else. save_dir == "" (battles) keeps
+# the old behaviour: no file exists and nothing is written, so battles never depend on saves.
+
+var save_dir := ""
+var on_save_written := Callable()   # called with the path of each save file written (debug mark)
+var ini_path := ""
+var ini_data := {}          # section -> {key -> value string}, insertion ordered
+var ini_dirty := false
+var text_files := {}        # id -> {"path", "write": bool, "lines": PackedStringArray, "line", "col", "out"}
+var next_file_id := 0
+
+
+func save_path(fname: String) -> String:
+	if save_dir == "":
+		return ""
+	var base := fname.replace("\\", "/").get_file()
+	if base == "" or base == "." or base == "..":
+		return ""
+	DirAccess.make_dir_recursive_absolute(save_dir)
+	return save_dir.path_join(base)
+
+
+func _ini_parse(txt: String) -> Dictionary:
+	var out := {}
+	var sec := ""
+	for raw in txt.split("\n"):
+		var line := raw.strip_edges()
+		if line == "" or line.begins_with(";") or line.begins_with("#"):
+			continue
+		if line.begins_with("[") and line.ends_with("]"):
+			sec = line.substr(1, line.length() - 2)
+			if not out.has(sec):
+				out[sec] = {}
+			continue
+		var eq := line.find("=")
+		if eq < 0:
+			continue
+		var key := line.substr(0, eq).strip_edges()
+		var val := line.substr(eq + 1).strip_edges()
+		if val.length() >= 2 and val.begins_with("\"") and val.ends_with("\""):
+			val = val.substr(1, val.length() - 2)
+		if not out.has(sec):
+			out[sec] = {}
+		out[sec][key] = val
+	return out
+
+
+func _ini_text() -> String:
+	var s := ""
+	for sec in ini_data:
+		s += "[%s]\r\n" % sec
+		for key in ini_data[sec]:
+			s += "%s=\"%s\"\r\n" % [key, ini_data[sec][key]]
+	return s
+
+
+# GameMaker writes reals into ini files with six decimals.
+static func _ini_real(v: float) -> String:
+	return "%.6f" % v
+
+
+func _ini_flush() -> void:
+	if ini_dirty and ini_path != "":
+		var f := FileAccess.open(ini_path, FileAccess.WRITE)
+		if f != null:
+			f.store_string(_ini_text())
+			f.close()
+			if on_save_written.is_valid():
+				on_save_written.call(ini_path)
+	ini_dirty = false
+
+
+func _f_ini_open2(name: String, a: Array, ctx: Dictionary):
+	if save_dir == "":
+		# Battles: no saves, every read answers its default (as before).
+		match name:
+			"ini_read_real":
+				return _n(a, 2)
+			"ini_read_string":
+				return _a(a, 2, "")
+		return 0.0
+	match name:
+		"ini_open":
+			_ini_flush()
+			ini_path = save_path(_s(a, 0))
+			ini_data = {}
+			if ini_path != "" and FileAccess.file_exists(ini_path):
+				ini_data = _ini_parse(FileAccess.get_file_as_string(ini_path))
+			return 0.0
+		"ini_open_from_string":
+			_ini_flush()
+			ini_path = ""
+			ini_data = _ini_parse(_s(a, 0))
+			return 0.0
+		"ini_close":
+			var txt := _ini_text()
+			_ini_flush()
+			ini_path = ""
+			ini_data = {}
+			return txt
+		"ini_write_real", "ini_write_string":
+			var sec := _s(a, 0)
+			if not ini_data.has(sec):
+				ini_data[sec] = {}
+			ini_data[sec][_s(a, 1)] = _ini_real(_n(a, 2)) if name == "ini_write_real" else _s(a, 2)
+			ini_dirty = true
+			return 0.0
+		"ini_read_real":
+			var v = ini_data.get(_s(a, 0), {}).get(_s(a, 1))
+			if v == null or not String(v).strip_edges().is_valid_float():
+				return _n(a, 2)
+			return float(String(v).strip_edges())
+		"ini_read_string":
+			var v2 = ini_data.get(_s(a, 0), {}).get(_s(a, 1))
+			return String(v2) if v2 != null else _a(a, 2, "")
+		"ini_section_exists":
+			return 1.0 if ini_data.has(_s(a, 0)) else 0.0
+		"ini_key_exists":
+			return 1.0 if ini_data.get(_s(a, 0), {}).has(_s(a, 1)) else 0.0
+		"ini_section_delete":
+			if ini_data.erase(_s(a, 0)):
+				ini_dirty = true
+			return 0.0
+		"ini_key_delete":
+			var sd: Dictionary = ini_data.get(_s(a, 0), {})
+			if sd.erase(_s(a, 1)):
+				ini_dirty = true
+			return 0.0
+	return 0.0
+
+
+func _tf(a: Array) -> Dictionary:
+	return text_files.get(int(_n(a, 0)), {})
+
+
+func _f_file2(name: String, a: Array, ctx: Dictionary):
+	if save_dir == "":
+		return "" if name == "file_text_read_string" else 0.0
+	match name:
+		"file_exists":
+			var p := save_path(_s(a, 0))
+			return 1.0 if p != "" and FileAccess.file_exists(p) else 0.0
+		"file_delete":
+			var p2 := save_path(_s(a, 0))
+			if p2 != "" and FileAccess.file_exists(p2):
+				DirAccess.remove_absolute(p2)
+			return 0.0
+		"file_copy", "file_rename":
+			var src := save_path(_s(a, 0))
+			var dst := save_path(_s(a, 1))
+			if src == "" or dst == "" or not FileAccess.file_exists(src):
+				return 0.0
+			if name == "file_copy":
+				DirAccess.copy_absolute(src, dst)
+			else:
+				DirAccess.rename_absolute(src, dst)
+			return 1.0
+		"directory_exists":
+			return 1.0 if save_dir != "" else 0.0
+		"directory_create":
+			return 0.0
+		"file_text_open_read":
+			var p3 := save_path(_s(a, 0))
+			if p3 == "" or not FileAccess.file_exists(p3):
+				return -1.0
+			next_file_id += 1
+			var txt := FileAccess.get_file_as_string(p3).replace("\r\n", "\n").replace("\r", "\n")
+			text_files[next_file_id] = {"path": p3, "write": false, "lines": txt.split("\n"), "line": 0, "col": 0}
+			return float(next_file_id)
+		"file_text_open_write", "file_text_open_append":
+			var p4 := save_path(_s(a, 0))
+			if p4 == "":
+				return -1.0
+			next_file_id += 1
+			var out := ""
+			if name == "file_text_open_append" and FileAccess.file_exists(p4):
+				out = FileAccess.get_file_as_string(p4)
+			text_files[next_file_id] = {"path": p4, "write": true, "out": out}
+			return float(next_file_id)
+		"file_text_close":
+			var id := int(_n(a, 0))
+			var tf: Dictionary = text_files.get(id, {})
+			if tf.get("write", false):
+				var f := FileAccess.open(tf["path"], FileAccess.WRITE)
+				if f != null:
+					f.store_string(tf["out"])
+					f.close()
+					if on_save_written.is_valid():
+						on_save_written.call(tf["path"])
+			text_files.erase(id)
+			return 0.0
+		"file_text_write_string":
+			var tw := _tf(a)
+			if tw.get("write", false):
+				tw["out"] += _s(a, 1)
+			return 0.0
+		"file_text_write_real":
+			var tw2 := _tf(a)
+			if tw2.get("write", false):
+				var rv := _n(a, 1)
+				tw2["out"] += str(int(rv)) if rv == floorf(rv) and absf(rv) < 1e15 else String.num(rv)
+			return 0.0
+		"file_text_writeln":
+			var tw3 := _tf(a)
+			if tw3.get("write", false):
+				tw3["out"] += "\r\n"
+			return 0.0
+		"file_text_readln":
+			var tr := _tf(a)
+			if tr.is_empty() or tr["write"]:
+				return ""
+			var lines: PackedStringArray = tr["lines"]
+			var rest := lines[tr["line"]].substr(tr["col"]) if tr["line"] < lines.size() else ""
+			tr["line"] += 1
+			tr["col"] = 0
+			return rest
+		"file_text_eof":
+			var te := _tf(a)
+			if te.is_empty() or te["write"]:
+				return 1.0
+			var ls: PackedStringArray = te["lines"]
+			# The text ends with a newline, which leaves one empty last "line".
+			var last := ls.size() - 1 if ls.size() > 0 and ls[ls.size() - 1] == "" else ls.size()
+			return 1.0 if te["line"] >= last else 0.0
+		"file_text_read_string":
+			var rs := _tf(a)
+			if rs.is_empty() or rs["write"] or rs["line"] >= (rs["lines"] as PackedStringArray).size():
+				return ""
+			var s: String = rs["lines"][rs["line"]].substr(rs["col"])
+			rs["col"] = (rs["lines"][rs["line"]] as String).length()
+			return s
+		"file_text_read_real":
+			var rr := _tf(a)
+			if rr.is_empty() or rr["write"] or rr["line"] >= (rr["lines"] as PackedStringArray).size():
+				return 0.0
+			var line: String = rr["lines"][rr["line"]]
+			var c: int = rr["col"]
+			while c < line.length() and line[c] == " ":
+				c += 1
+			var e := c
+			while e < line.length() and "0123456789.-+eE".contains(line[e]):
+				e += 1
+			rr["col"] = e
+			var num := line.substr(c, e - c)
+			return float(num) if num.is_valid_float() else 0.0
+	return 0.0
+
+
+# Persistent rooms keep their views, layers and tiles too.
+func room_state_save() -> Dictionary:
+	var arr := {}
+	for k in room_arr:
+		arr[k] = (room_arr[k] as Array).duplicate()
+	return {"arr": arr, "views_on": views_on, "show_colour": show_colour, "colour": background_color, "tiles": tiles.duplicate(true)}
+
+
+func room_state_restore(s: Dictionary) -> void:
+	room_arr = s["arr"]
+	view_xview = room_arr["view_xview"]
+	view_yview = room_arr["view_yview"]
+	view_wview = room_arr["view_wview"]
+	view_hview = room_arr["view_hview"]
+	views_on = s["views_on"]
+	show_colour = s["show_colour"]
+	background_color = s["colour"]
+	tiles = s["tiles"]
+	tiles_sorted = false

@@ -1,0 +1,393 @@
+# Walkthrough of the Ruins, played by godot/game_bot.gd (see the commands there).
+#   godot --headless --path godot -- --game --seed 7 --savedir DIR --frames 60000 --bot ../tests/walkthrough_ruins.txt
+# Each section ends with checks on the story state, so a broken cutscene or puzzle stops the
+# run where it breaks.
+
+# ---- intro, title, naming
+battle fight
+z_until room=room_intromenu within 900
+wait 40
+tap z                 # instructions -> menu
+wait 40
+tap z                 # Begin Game -> naming
+wait 40
+tap z                 # letter A
+tap d
+tap d
+tap d
+tap d
+tap d
+tap d
+tap d
+tap d                 # bottom row: Quit
+tap r
+tap r                 # Done
+tap z
+wait 60
+tap r                 # Yes
+tap z
+wait_until room=room_area1 within 600
+expect plot=0
+
+# ---- the first room: wake up, walk right
+wait_until interact=0 within 600
+goto 615 150
+hold u 30
+wait_until room=room_area1_2 within 120
+shot area1_2
+
+# ---- Flowey: he stops you, talks, his battle (Toriel saves you), back in the room
+battle fight
+gotoy 300 150
+z_until room=room_area1_2 & plot>=1 & nobattle within 4000
+expect plot>=1
+# Toriel walks down, talks, then walks off
+z_until exists=obj_toroverworld1 within 1500
+z_until gone=obj_toroverworld1 within 1500
+wait_until interact=0 within 300
+goto 150 160
+hold u 30
+wait_until room=room_ruins1 within 200
+shot ruins1
+
+# ---- Ruins 1: Toriel waits at the stairs and leads on
+expect exists=obj_toroverworld2
+path 150 196
+face u
+talk                  # the save point: Save
+wait 10
+path 150 100
+hold u 40
+wait_until room=room_ruins2 within 300
+expect plot>=2
+shot ruins2
+
+# ---- Ruins 2: Toriel shows the floor switches
+z_until interact=0 within 1200
+expect plot>=3
+path 140 45
+hold u 30
+wait_until room=room_ruins3 within 200
+shot ruins3
+
+# ---- Ruins 3: Toriel walks ahead, asks you to flip the two marked switches
+z_until interact=0 & notext within 600
+path 382 58
+face u
+talk
+z_until plot>=4.5 & notext within 600
+path 582 58
+face u
+talk
+z_until plot>=5 & notext within 900
+expect plot>=5
+shot ruins3_switches
+z_until notext & interact=0 within 600
+path 690 150
+hold r 40
+wait_until room=room_ruins4 within 200
+shot ruins4
+
+# ---- Ruins 4: Toriel talks, walks to the door; the Dummy battle (talk to it)
+z_until plot>=5.5 & notext & interact=0 within 900
+expect plot=5.5
+path 200 112
+face u
+battle act:1
+talk
+z_until nobattle & room=room_ruins4 within 4000
+expect plot>=6
+z_until plot>=7 & notext & interact=0 within 900
+expect plot=7
+shot ruins4_after_dummy
+path 155 45
+hold u 30
+wait_until room=room_ruins5 within 200
+shot ruins5
+expect exists=obj_toroverworld5
+
+# ---- Ruins 5: Toriel walks ahead to the spikes, then leads you across by the hand
+z_until exists=obj_toroverworld6 & notext & interact=0 within 600
+path 450 100
+path 650 140
+path 740 110
+wait_until exists=obj_torinteractable5 within 600
+shot ruins5_toriel_at_spikes
+path 760 121
+face r
+talk
+z_until plot>=7.5 within 600
+expect plot>=7.5
+z_until plot>=8 & notext & interact=0 within 1500
+shot ruins5_across
+path 1160 110
+hold r 40
+wait_until room=room_ruins6 within 200
+shot ruins6
+
+# ---- Ruins 6: the long hall alone; Toriel waits behind the pillar, gives you the phone
+z_until plot>=8.5 & notext & interact=0 within 900
+path 2320 110
+roam r plot>=9 within 120
+z_until gone=obj_torieltrigger4 & notext & interact=0 within 2000
+expect plot=9
+shot ruins6_phone
+path 2455 110
+hold r 40
+wait_until room=room_ruins7 within 200
+shot ruins7
+
+# ---- Ruins 7: Toriel calls when you walk left; the candy room up top; random encounters
+path 100 110
+z_until notext & interact=0 within 900
+show plot,flag.202
+path 150 50
+hold u 30
+wait_until room=room_ruins7A within 200
+path 150 106
+face u
+talk                  # the candy dish: take one
+show item.0,item.1,item.2
+expect item.0>0
+path 150 210
+hold d 30
+wait_until room=room_ruins7 within 200
+battle act:1          # random encounters: the second ACT (Compliment, Console...), then spare
+path 160 300
+roam ud battle within 3000
+log encounter while walking up and down (keys held)
+show hp,maxhp
+z_until nobattle & room=room_ruins7 & interact=0 within 4000
+show hp,maxhp,xp
+canmove u
+canmove d
+canmove l
+canmove r
+path 290 352
+hold r 30
+wait_until room=room_ruins8 within 200
+shot ruins8
+
+# ---- Ruins 8: the cracked floor gives way; walk back up from the leaf pile
+path 290 110
+wait_until room=room_ruins9 within 2000
+shot ruins9
+
+# ---- Ruins 9: Toriel calls again; push the rock onto the switch, the spikes go down
+z_until notext & interact=0 within 600
+path 150 120
+z_until notext & interact=0 within 900
+where obj_pushrock3
+path 158 120
+roam rz flag.35=1 within 300
+where obj_pushrock3
+expect flag.35=1
+z_until notext & interact=0 within 900
+shot ruins9_rock
+path 440 110
+z_until notext & interact=0 within 900
+path 450 110
+hold r 30
+wait_until room=room_ruins10 within 300
+shot ruins10
+
+# ---- Ruins 10: the cracked floor (falling through drops you below; walk back up)
+path 545 232
+hold r 30
+wait_until room=room_ruins11 within 3000
+shot ruins11
+
+# ---- Ruins 11: push two rocks onto their switches; talk the third one out of the way
+path 156 120
+roam rz flag.31=1 within 300
+expect flag.31=1
+path 176 80
+roam rz flag.32=1 within 300
+expect flag.32=1
+path 196 160
+push obj_goofyrock r obj_goofyrock.conversation>=9 & notext & interact=0 within 5000
+# Walking on past it: the rock slides back, the spikes come up, and it must be asked again.
+path 360 130
+z_until obj_goofyrock.conversation>=11 & notext within 600
+push obj_goofyrock r flag.33=1 & notext & interact=0 within 5000
+expect obj_goofyrock.x=280
+expect obj_spikes_room.image_index=1
+shot ruins11_rocks
+z_until notext & interact=0 within 600
+canmove l
+path 520 130
+hold r 30
+wait_until room=room_ruins12A within 300
+shot ruins12A
+
+# ---- Ruins 12A: a save point and the mouse hole
+use obj_savepoint     # save
+path 285 132
+hold r 30
+wait_until room=room_ruins12 within 200
+shot ruins12
+
+# ---- Ruins 12: Napstablook blocks the way; cheer him up (ACT: Cheer every turn)
+battle acts:3
+path 112 125
+face r
+talk
+z_until battle within 900
+z_until nobattle & room=room_ruins12 within 6000
+z_until plot>=11 & notext & interact=0 within 600
+expect plot=11
+expect gone=obj_napstablook1
+battle act:1
+
+# ---- Ruins 12B: the spider bake sale (buy a donut when there's gold for it)
+path 285 132
+hold r 30
+wait_until room=room_ruins12B within 200
+shot ruins12B
+show gold,item.0,item.1
+use obj_smallweb      # buy a Spider Donut (7G)
+show gold,item.0,item.1
+expect item.1=7
+path 25 130
+hold l 30
+wait_until room=room_ruins12 within 200
+path 210 82
+hold u 30
+wait_until room=room_ruins13 within 300
+shot ruins13
+
+# ---- Ruins 13: the frogs' room; Toriel calls on the way
+path 600 172
+hold r 30
+wait_until room=room_ruins14 within 600
+shot ruins14
+
+# ---- Ruins 14: fall through the floor, press the switch below, come back up by a hole
+show plot
+# The floor gives way at six small spots (spr_holemask3); the floor below is split in three,
+# and the switch is under the middle spots: stand above the top middle one and step down.
+path 380 92
+hold d 20
+wait_until py>400 & interact=0 within 600
+use obj_plotswitch3
+z_until plot>=13 & interact=0 & notext within 600
+expect plot>=13
+shot ruins14_switch
+path 560 500
+wait_until py<300 & interact=0 within 600
+path 600 172
+hold r 30
+wait_until room=room_ruins15A within 600
+shot ruins15A
+
+# ---- Ruins 15A-D: the switch rooms (15A: none of them matter; then blue, red, green)
+show plot
+path 250 400
+hold d 30
+wait_until room=room_ruins15B within 600
+use obj_blueswitch_1     # "Press it?" Yes
+expect plot>=14
+path 20 330
+hold l 30
+wait_until room=room_ruins15C within 600
+use obj_redswitch_1     # "Press it?" Yes
+expect plot>=15
+path 130 110
+hold u 30
+wait_until room=room_ruins15D within 600
+use obj_greenswitch_1     # "Press it?" Yes
+expect plot>=16
+path 360 172
+hold r 30
+wait_until room=room_ruins16 within 600
+shot ruins16
+
+# ---- Ruins 16: up through the top door to Ruins 19
+path 290 82
+hold u 30
+wait_until room=room_ruins19 within 600
+shot ruins19
+
+# ---- Ruins 19: Toriel finds you and leads you home
+z_until plot>=17 & notext within 3000
+wait_until gone=obj_torieltrigger5 & interact=0 within 600
+canmove u
+use obj_savepoint
+path 150 172
+hold u 30
+wait_until room=room_torhouse1 within 600
+shot torhouse1
+
+# ---- Toriel's house: the hall, then Toriel shows you your room
+z_until plot>=18 & notext & interact=0 within 3000
+path 285 170
+hold r 30
+wait_until room=room_torhouse3 within 600
+z_until plot>=19 & notext & interact=0 within 3000
+shot torhouse3
+canmove l
+# back through the hall to the living room; ask Toriel how to leave the Ruins
+path 15 150
+hold l 30
+wait_until room=room_torhouse1 within 600
+path 15 170
+hold l 30
+wait_until room=room_torhouse2 within 600
+shot torhouse2
+choose 1
+use obj_chairiel     # talk until she gets up to go to the basement (19.9, then 20)
+use obj_chairiel
+use obj_chairiel
+use obj_chairiel
+use obj_chairiel
+show plot
+
+# ---- Down the stairs after Toriel
+expect plot>=20
+path 290 165
+hold r 30
+wait_until room=room_torhouse1 within 600
+path 156 98      # round the railing to the top of the stairs, then down them
+wait_until room=room_basement1 within 600
+shot basement1
+
+# ---- The basement: Toriel stops you three times on the way, then fights you at the door
+path 460 130
+z_until plot>=22 & notext & interact=0 within 3000
+path 460 130
+hold r 30
+wait_until room=room_basement2 within 900
+path 460 130
+z_until plot>=23 & notext & interact=0 within 3000
+path 460 130
+hold r 30
+wait_until room=room_basement3 within 900
+path 150 25
+z_until plot>=24 & notext & interact=0 within 3000
+path 150 25
+hold u 30
+wait_until room=room_basement4 within 900
+shot basement4
+battle spare
+path 150 80     # Toriel stops you on the way: the fight (spare her) happens during the walk
+z_until plot>=25 & nobattle & notext & interact=0 within 30000
+expect hp>0
+shot basement4_after
+path 150 78
+hold u 30
+wait_until room=room_basement5 within 900
+
+# ---- The long corridor, Flowey at the exit, and out of the Ruins
+path 150 85
+hold u 30
+wait_until room=room_ruinsexit within 900
+shot ruinsexit
+path 150 175
+z_until plot>=28 & notext & interact=0 within 6000
+shot ruinsexit_flowey
+path 151 158
+hold u 30
+z_until room=room_tundra1 & interact=0 within 3000
+shot tundra1
+canmove r
+log out of the Ruins

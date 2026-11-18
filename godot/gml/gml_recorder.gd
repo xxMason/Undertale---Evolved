@@ -11,6 +11,9 @@ var prev_pos := {}     # instance id -> position at the previous logic frame
 var cur_pos := {}      # instance id -> position at this logic frame
 var prev_ops := {}     # instance id -> that instance's drawing ops at the previous logic frame
 var view := Vector2.ZERO   # view 0's position (view_xview/yview): screen shake moves it
+var prev_view := Vector2.ZERO  # its position at the previous logic frame (smoothed between)
+var view_scale := Vector2.ONE  # port size / view size (the overworld draws 320x240 at 2x)
+var _snap := Vector2.ONE       # smoothing rounds to whole screen pixels: 1 / this, in room units
 var _owners: Array = []    # [id, index of its "@owner" op] in drawing order, this frame
 var _plan := {}            # see _make_plan
 var _plan_dirty := true
@@ -29,6 +32,7 @@ func clear() -> void:
 	ops.clear()
 	prev_pos = cur_pos
 	cur_pos = {}
+	prev_view = view
 
 
 func _segment_end(start: int) -> int:
@@ -61,9 +65,16 @@ func owner(id: int, pos: Vector2) -> void:
 # sides and corners while it resizes) stay joined. Otherwise its drawing is only shifted
 # back towards where the instance was. Jumps are not smoothed. Blended pixel positions
 # move in whole pixels, keeping the current frame's sub-pixel part, like the shift does.
-func replay(canvas: CanvasItem, f := 1.0) -> void:
-	var base := -view
+func replay(canvas, f := 1.0) -> void:
+	var v := view
+	var sc := view_scale
+	if f < 1.0 and sc != Vector2.ONE and view != prev_view and (view - prev_view).length() <= JUMP:
+		# The view follows the player: smoothed like the instances, in whole screen pixels.
+		_snap = sc
+		v = view - _px((view - prev_view) * (1.0 - f))
+	var base := -v
 	var offset := base
+	_snap = sc
 	var blend: Array = []    # previous frame's ops for the current segment, when blending
 	var bi := 0
 	var t := 1.0 - f
@@ -83,13 +94,14 @@ func replay(canvas: CanvasItem, f := 1.0) -> void:
 					blend = how
 					bi = 0
 				elif how is Vector2:
-					offset = base + (how * t).round()
-			canvas.draw_set_transform(offset)
+					offset = base + _px(how * t)
+			canvas.draw_set_transform(offset * sc, 0.0, sc)
 			i += 1
 			continue
 		if name == "@gui":
 			base = Vector2.ZERO
 			offset = base
+			sc = Vector2.ONE
 			blend = []
 			canvas.draw_set_transform(offset)
 			i += 1
@@ -99,7 +111,7 @@ func replay(canvas: CanvasItem, f := 1.0) -> void:
 			args = _mix(name, blend[bi][1], args, t)
 			bi += 1
 		if name == "draw_set_transform":
-			canvas.draw_set_transform(args[0] + offset, args[1], args[2])
+			canvas.draw_set_transform((args[0] + offset) * sc, args[1], args[2] * sc)
 		else:
 			canvas.callv(name, args)
 		i += 1
@@ -171,12 +183,19 @@ func _changes(p: Array, start: int) -> int:
 	return moved
 
 
+# A smoothing offset rounded to whole screen pixels (room pixels in battles, half room
+# pixels in the 2x overworld), the same way for the view and for every instance, so
+# whatever the view follows stays put on screen.
+func _px(d: Vector2) -> Vector2:
+	return (d * _snap).round() / _snap
+
+
 # Blends one op's arguments: a = previous frame, b = this frame, t = weight of a.
 func _mix(name: String, aa: Array, ba: Array, t: float) -> Array:
 	var out := ba.duplicate()
 	if name == "draw_set_transform":
 		# position, angle, scale: scale and angle are not pixel positions.
-		out[0] = ba[0] + ((aa[0] - ba[0]) * t).round()
+		out[0] = ba[0] + _px((aa[0] - ba[0]) * t)
 		out[1] = lerp_angle(float(ba[1]), float(aa[1]), t)
 		out[2] = ba[2] + (aa[2] - ba[2]) * t
 		return out
@@ -187,17 +206,17 @@ func _mix(name: String, aa: Array, ba: Array, t: float) -> Array:
 		var b = ba[j]
 		match typeof(b):
 			TYPE_VECTOR2:
-				out[j] = b + ((a - b) * t).round()
+				out[j] = b + _px((a - b) * t)
 			TYPE_RECT2:
-				var p0: Vector2 = b.position + ((a.position - b.position) * t).round()
-				var p1: Vector2 = b.end + ((a.end - b.end) * t).round()
+				var p0: Vector2 = b.position + _px((a.position - b.position) * t)
+				var p1: Vector2 = b.end + _px((a.end - b.end) * t)
 				out[j] = Rect2(p0, p1 - p0)
 			TYPE_FLOAT:
 				out[j] = b + (a - b) * t
 			TYPE_PACKED_VECTOR2_ARRAY:
 				var pts := PackedVector2Array(b)
 				for q in pts.size():
-					pts[q] = b[q] + ((a[q] - b[q]) * t).round()
+					pts[q] = b[q] + _px((a[q] - b[q]) * t)
 				out[j] = pts
 	return out
 

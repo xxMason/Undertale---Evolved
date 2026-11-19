@@ -32,6 +32,7 @@ const MpRooms = preload("res://mp_rooms.gd")
 const MpSaves = preload("res://mp_saves.gd")
 const MpUi = preload("res://mp_ui.gd")
 const MpScenes = preload("res://mp_scenes.gd")
+const MpBattles = preload("res://mp_battles.gd")
 const SansSpeech = preload("res://sans_speech.gd")
 const CoopCheats = preload("res://coop_cheats.gd")
 const World = preload("res://gml/gml_world.gd")
@@ -1252,7 +1253,10 @@ func _game_frame() -> void:
 		gk = []     # the debug menu has the keyboard
 	keys.poll(gk)
 	_mp_frame_start()
-	vm.step_frame(keys)
+	# With several players the world steps with its lead's keys (in a shared battle, whoever's
+	# turn it is); player 1's are `keys`.
+	var wk = mp.list[mp.primary].keys if mp != null else keys
+	vm.step_frame(wk)
 	vm.room_frame_end()
 	var guard := 0
 	while vm.pending_room != -1 and guard < 4:
@@ -1265,7 +1269,7 @@ func _game_frame() -> void:
 		else:
 			vm.pending_room = -1
 			vm.load_room(r)
-		vm.step_frame(keys)
+		vm.step_frame(mp.list[mp.primary].keys if mp != null else keys)
 		vm.room_frame_end()
 	if mp != null:
 		mp.after_step()
@@ -1406,6 +1410,7 @@ func _game_frame() -> void:
 		# loaded again (and becomes the one its player went to, if they changed room).
 		mprooms.step_others()
 		mpscenes.end_frame()
+		mpbattles.end_frame()
 		mprooms.settle()
 	_world_test_frame()
 	var rda := OS.get_cmdline_user_args().find("--recdump")
@@ -3015,6 +3020,7 @@ var mprooms = null          # mp_rooms.gd: players in different rooms
 var mpsaves = null          # mp_saves.gd: saving for everyone
 var mpui = null             # mp_ui.gd: each player's prompts ("Teleport to Story Event?")
 var mpscenes = null         # mp_scenes.gd: story scenes that gather the party
+var mpbattles = null        # mp_battles.gd: battles several players share
 var mp_ui_state := {}       # a friend's PC: the prompt the host sent for this player
 
 
@@ -3027,6 +3033,8 @@ func mp_started() -> void:
 	mpui.setup(self)
 	mpscenes = MpScenes.new()
 	mpscenes.setup(self)
+	mpbattles = MpBattles.new()
+	mpbattles.setup(self)
 
 
 func net_name() -> String:

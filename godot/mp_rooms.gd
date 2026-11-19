@@ -153,11 +153,30 @@ func room_change(to: int) -> bool:
 			mp.list[m].respawn = true
 	elif _is_gameover(vm.room) and r.members.any(func(m): return mp.list[m].respawn):
 		to = _respawn(r, to)
+	# A shared battle ends: everyone leaves it with its state (the downed get up on 1 HP), and a
+	# player who joined from another room goes back there.
+	var bt = eng.get("mpbattles")
+	if bt != null and bt.is_battle_room(vm.room) and to != vm.room:
+		if bt.battles.has(r):
+			p = -1     # a shared battle: everyone in it leaves together
+		bt.ending(r, to)
+		if not _private_room(to):
+			for m in r.members.duplicate():
+				var bk = mp.list[m].back
+				if r.members.size() > 1 and bk is Array and int(bk[0]) != to and int(bk[0]) >= 0:
+					_log("%s goes back to %s" % [mp.list[m].name, vm.room_names[int(bk[0])]])
+					_send(m, int(bk[0]))
 	var others: Array = r.members.filter(func(m): return m != p)
-	if p >= 0 and r.members.has(p) and not others.is_empty():
-		_log("%s goes from %s to %s, %s stay" % [mp.list[p].name, room_name(r), vm.room_names[to], others])
+	# An encounter pulls in the players close by (mp_battles.gd).
+	var pulled: Array = bt.pull_in(p, to) if bt != null and p >= 0 and r.members.has(p) else []
+	var stay: Array = others.filter(func(m): return not pulled.has(m))
+	if p >= 0 and r.members.has(p) and not stay.is_empty():
+		_log("%s goes from %s to %s, %s stay%s" % [mp.list[p].name, room_name(r), vm.room_names[to], stay, (", %s with them" % [pulled]) if not pulled.is_empty() else ""])
 		vm.pending_room = -1
 		_send(p, to)
+		var into := room_of(p)
+		for m in pulled:
+			_send(m, to, into)
 		return false
 	var there := _running(to, r)
 	if there != null:
@@ -255,8 +274,9 @@ func _private_room(k: int) -> bool:
 	return n == "room_battle" or n == "room_floweybattle" or n.begins_with("room_gameover")
 
 
-# Player p goes from the world in the machine to room `to`.
-func _send(p: int, to: int) -> void:
+# Player p goes from the world in the machine to room `to`: to the world `into` (a battle they
+# are pulled into or join), else the one running that room, else a new one.
+func _send(p: int, to: int, into: Room = null) -> void:
 	var from := cur
 	var keep_ctx: int = vm.ctx_owner
 	# What goes with them: their character is made afresh there (its Create puts it at the
@@ -296,7 +316,7 @@ func _send(p: int, to: int) -> void:
 	for i in vm.instances:
 		if not i.dead and i.owner < 0 and float(i.v.get("persistent", 0.0)) >= 0.5:
 			shared.append(i)
-	var to_room := _running(to, from)
+	var to_room := into if into != null and rooms.has(into) else _running(to, from)
 	if to_room == null:
 		to_room = Room.new()
 		to_room.w = World.empty(vm, _next, (eng.bi.rng.next() ^ (_next * 104729)) & 0x7FFFFFFF)
@@ -341,6 +361,14 @@ func _send(p: int, to: int) -> void:
 			vm._insert_by_depth(c)
 			vm.by_id[c.id] = c
 		vm.inst_version += 1
+		if _private_room(to):
+			# A battle: no character there (their SOUL is made by mp_battles.gd).
+			_log("%s joins the world in %s" % [mp.list[p].name, vm.room_names[to]])
+			switch(from)
+			mp.switch_to(keep_ctx)
+			if from.members.is_empty():
+				_drop(from)
+			return
 		# Their character, made in their own context: Undertale's Create puts it at the marker
 		# of the door they came through.
 		mp.switch_to(p)

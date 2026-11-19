@@ -135,6 +135,10 @@ Say $wok 'worlds: a second room running alongside changes nothing in the game' $
 $osc = ((0..7 | ForEach-Object { "$(10 + 20 * $_):37x8,$(20 + 20 * $_):39x8" }) + (0..83 | ForEach-Object { "$(230 + 8 * $_):90x2" })) -join ','
 $dk = ((0..9 | ForEach-Object { "$(250 + 20 * $_):37x8,$(260 + 20 * $_):39x8" }) + (0..229 | ForEach-Object { "$(460 + 8 * $_):90x2" })) -join ','
 $zz = (@('10:39x23,35:38x20') + (0..62 | ForEach-Object { "$(70 + 10 * $_):90x2" })) -join ','
+$wk = (0..7 | ForEach-Object { "$(10 + 20 * $_):37x8,$(20 + 20 * $_):39x8" }) -join ','
+$pz1 = (@($wk) + (0..249 | ForEach-Object { "$(230 + 8 * $_):90x2" })) -join ','
+$pz2 = (0..159 | ForEach-Object { "$(234 + 8 * $_):90x2" }) -join ','
+$jz2 = (@('140:67x2,200:88x2,230:13x2,245:90x2') + (0..239 | ForEach-Object { "$(270 + 8 * $_):90x2" })) -join ','
 $mpruns = @(
     @('sign', @('--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '175', '--press', '40:39x15,80:37x15', '--pfeed', '2=10:39x7,20:38x25,60:90x2,100:90x2,140:90x2')),
     @('menu', @('--room', 'room_ruins9', '--set', 'plot=9.2,hp=10,item.0=1,item.1=1', '--frames', '205', '--press', '40:39x15,80:37x15', '--pfeed', '2=30:67x2,50:90x2,70:90x2,90:90x2,120:90x2,150:90x2,175:90x2')),
@@ -148,7 +152,13 @@ $mpruns = @(
     # Player 2 (1 HP) is downed alone after player 1 saved, and comes back at the save.
     @('death', @('--room', 'room_ruins7', '--set', 'plot=11,hp=1', '--frames', '2405', '--press', '20:40x8,40:90x2,110:90x2,125:90x2,150:90x2,220:90x2,240:90x2', '--pfeed', "2=$dk")),
     # Toriel's scene in room_ruins19 waits for player 2, who says Yes once free and is brought there.
-    @('gather', @('--room', 'room_ruins19', '--set', 'plot=16', '--frames', '700', '--press', '80:40x100', '--pfeed', "2=$zz"))
+    @('gather', @('--room', 'room_ruins19', '--set', 'plot=16', '--frames', '700', '--press', '80:40x100', '--pfeed', "2=$zz")),
+    # Stage 8: player 2 stands by player 1's encounter and is pulled in: one battle, two SOULs, turns in order.
+    @('party', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '1600', '--press', $pz1, '--pfeed', "2=$pz2")),
+    # Player 2 comes in on 1 HP and goes down; player 1 revives them from MERCY after 3 turns.
+    @('revive', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '1500', '--press', $wk, '--pfeed', '2=idle')),
+    # Player 2 is in their menu (not pulled in), then joins with Enter by where player 1 stood.
+    @('join', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '2400', '--press', $pz1, '--pfeed', "2=$jz2"))
 )
 foreach ($r in $mpruns) {
     $mo = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP "ube_check_mp_$($r[0])") --players 2 --mpcheck $r[0] @($r[1]) 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' }

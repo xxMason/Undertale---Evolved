@@ -340,3 +340,40 @@ player whose camera and values the room's own objects follow) and members.
   dummy, in her house) only play for whoever is in the room; players brought to a scene stand
   on the spot of the one who found it.
 - Tests: `--mpcheck battles / save / death / gather`.
+
+### Stage 8: battles (in progress 2026-11-19)
+
+`godot/mp_battles.gd`.
+
+- **Pulling in.** A player's encounter takes the players in the same room within 160 pixels
+  who are free (no menu, text box or prompt) into the same battle. A battle with everyone in
+  the world becomes that world; otherwise the battle is a new world with them in it.
+- **One battle, several players.** While a battle has more than one player, its state (menu,
+  turn, enemies, text) is everyone's; only HP, stats, items, gold, invincibility and input stay
+  each player's (`mp_players.gd PERSONAL`). Every player has their own `obj_heart`, copied from
+  the room's (its Create would reset the menu), moved by their own keys. A bullet's collision
+  runs in the context of the SOUL it touches, so Undertale's own damage code takes that
+  player's HP. Bullets aiming at `obj_heart` each pick one SOUL by their id, so attacks spread
+  over the party; the battle's own bookkeeping means the SOUL of the player whose turn it is.
+- **Screens.** Your SOUL as Undertale draws it; the others' at 25% with their name over them
+  (`gml_recorder.gd` fade, also over the network). The HP bar shows the player whose turn it is,
+  by name. The others' HP is listed top-right, with "Greg's turn" on the screens of those
+  waiting.
+- **Turns in order.** Each new menu turn the next player up becomes the world's lead: the menu
+  and the text answer to their keys. The world steps with its lead's keys (`engine.gd`).
+- **Down and Revive.** A player at 0 HP is down: their SOUL goes and everyone is told. If it was
+  their turn, the next player takes it. After 3 turns down, MERCY gets "Revive Greg" (the
+  turn; back at 30% HP, a moment of invincibility). The downed get up on 1 HP after the battle.
+  Everyone down is Undertale's game over (with others playing elsewhere: everyone in it comes
+  back at the save, as for a solo death).
+- **Join Battle.** Players who weren't pulled in see "Kyle is in a battle" where Kyle stood;
+  Enter there asks "Join Battle?" (Yes / No), and a Yes joins at the start of the next turn.
+  After the battle a player who joined from elsewhere goes back to where they joined from.
+- **Rewards.** EXP is shared; the gold the battle gives goes to each player in it.
+- **Co-op Difficulty Scaling** (setting `multiplayer/difficulty_scaling`, off by default;
+  `--mpscale` in tests): enemy HP +50% for each player past the first, raised again as players
+  join.
+- A persistent room everyone had left gets a character again where it places its player.
+- Not yet: Undyne's per-player spears (Waterfall); ITEM on a teammate ("Who?" from 0.4); a turn
+  timer for a player who doesn't act; a toggle for scaling in the menus.
+- Tests: `--mpcheck party / revive / join`.

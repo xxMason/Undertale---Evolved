@@ -5,6 +5,7 @@
 extends RefCounted
 
 const JUMP := 40.0   # movement larger than this between two logic frames is not smoothed
+const FADE := 0.25   # alpha of what is faded for this screen (another player's SOUL)
 
 var ops: Array = []
 var prev_pos := {}     # instance id -> position at the previous logic frame
@@ -55,11 +56,13 @@ func gui_begin() -> void:
 # With several players (docs/MULTIPLAYER.md stage 3): `tag` is the player the drawing is
 # private to (-1: everyone's), and `anchor` the view it was drawn against when it sits on the
 # screen rather than in the room (null: in the room).
-func owner(id: int, pos: Vector2, tag := -1, anchor = null) -> void:
+# `fade`: the player it belongs to, who sees it as drawn; everyone else sees it at 25% (another
+# player's SOUL in a shared battle). -1: as drawn for everyone.
+func owner(id: int, pos: Vector2, tag := -1, anchor = null, fade := -1) -> void:
 	cur_pos[id] = pos
 	_plan_dirty = true
 	_owners.append([id, ops.size()])
-	ops.append(["@owner", [id, tag, anchor]])
+	ops.append(["@owner", [id, tag, anchor, fade]])
 
 
 # f = how far the renderer is between the last two logic frames (0..1), so movement looks
@@ -84,6 +87,7 @@ func replay(canvas, f := 1.0, who := -1, pview = null, pprev = null) -> void:
 	var base := -v
 	var room_base := base
 	var skip := false
+	var faded := false
 	var offset := base
 	_snap = sc
 	var blend: Array = []    # previous frame's ops for the current segment, when blending
@@ -102,6 +106,7 @@ func replay(canvas, f := 1.0, who := -1, pview = null, pprev = null) -> void:
 			if skip:
 				i += 1
 				continue
+			faded = meta.size() > 3 and meta[3] != null and int(meta[3]) >= 0 and int(meta[3]) != who
 			# On the screen, not in the room: where it was against the view it was drawn for.
 			base = room_base if meta.size() < 3 or meta[2] == null else room_base - (meta[2] - cur)
 			if not shift.is_empty():
@@ -120,6 +125,7 @@ func replay(canvas, f := 1.0, who := -1, pview = null, pprev = null) -> void:
 			continue
 		if name == "@gui":
 			skip = false
+			faded = false
 			room_base = Vector2.ZERO
 			base = Vector2.ZERO
 			offset = base
@@ -138,6 +144,11 @@ func replay(canvas, f := 1.0, who := -1, pview = null, pprev = null) -> void:
 		if name == "draw_set_transform":
 			canvas.draw_set_transform((args[0] + offset) * sc, args[1], args[2] * sc)
 		else:
+			if faded:
+				args = args.duplicate()
+				for a in args.size():
+					if args[a] is Color:
+						args[a] = Color(args[a], (args[a] as Color).a * FADE)
 			canvas.callv(name, args)
 		i += 1
 	canvas.draw_set_transform(Vector2.ZERO)

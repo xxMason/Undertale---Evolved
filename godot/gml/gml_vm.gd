@@ -110,7 +110,10 @@ var inst_keys := {}
 # aim_skip: objects that always mean the game's own SOUL (the battle's own bookkeeping).
 var aim_split := false
 var aim_skip := {}
+var aim_obj := -1                # obj_heart, for a shared battle's aiming (_aim)
 var _src_cache := {}
+var party_name := Callable()        # the name a shared battle's HP bar shows (mp_battles.gd)
+var party_draw := Callable()        # after the room's drawing, with several players (mp_battles.gd)
 var draw_end_hook := Callable()     # after the room's drawing, before Draw GUI (co-op name tags)
 # Players (docs/MULTIPLAYER.md stage 2, mp_players.gd). With owners_on, every instance may
 # belong to a player (Inst.owner). An event of a player's instance, or one whose `other` is
@@ -127,12 +130,14 @@ var claimed: Array = []          # instances claimed through scr_interact
 # Private objects (text boxes, faces): each player only sees their own and the world's;
 # the world sees its own and the primary player's (as in the one-player game).
 var private_objs := {}           # object index -> true (children included)
+var faded_objs := {}             # object index -> true: a player's own is drawn faded on the others' screens (SOULs)
 var primary_owner := 0
 # Per-player objects (the overworld menu): one instance in the room, but its events run once
 # for each player in multi_players, in their context and with their own copy of its
 # variables (Inst.pv), so several players can have it open at once.
 var multi_objs := {}             # object index -> true
 var gate_objs := {}              # object index -> true: story triggers that can wait for everyone
+var party_on := false            # a battle several players share (mp_battles.gd): its state is everyone's
 var scene_owner := -1            # the player whose story scene this world is playing: their text is everyone's
 var event_gate := Callable()     # (instance, player) -> bool: may the trigger run now
 var multi_players: Array = []    # player indices
@@ -801,6 +806,8 @@ func first_of(target, ctx: Dictionary):
 	var r := resolve(target, ctx)
 	if r.is_empty():
 		return null
+	if party_on and r.size() > 1 and ctx_owner < 0 and aim_obj >= 0 and (target is float or target is int) and int(target) == aim_obj:
+		return _aim(r)
 	if scoped != null and r.size() > 1 and r.has(scoped):
 		if in_scope:
 			return scoped
@@ -816,6 +823,21 @@ func first_of(target, ctx: Dictionary):
 		if i.id < best.id:
 			best = i
 	return best
+
+
+# A shared battle's SOULs (mp_battles.gd), read as obj_heart by the world's objects: the
+# battle's own bookkeeping (aim_skip) means the SOUL of the player whose turn it is; anything
+# else (a bullet aiming) one SOUL by its id, so attacks spread over the party.
+func _aim(r: Array):
+	var hs := r.duplicate()
+	hs.sort_custom(func(a, b): return a.id < b.id)
+	var me = cur_self
+	if me is Inst and me.owner < 0 and not aim_skip.has(int(me.obj)):
+		return hs[int(me.id) % hs.size()]
+	for h in hs:
+		if h.owner == primary_owner:
+			return h
+	return hs[0]
 
 
 # Runs a piece of GML source (compiled once) as `inst`; co-op uses it for the Revive turn.
@@ -1708,6 +1730,17 @@ var _draw_pass := 0
 
 
 func draw_frame() -> void:
+	# A shared battle (mp_battles.gd): the battle's HP bar names the player whose turn it is.
+	var name_keep = null
+	if party_on and owners_on and party_name.is_valid():
+		name_keep = globals.get("charname", "")
+		globals["charname"] = party_name.call()
+	_draw_frame()
+	if name_keep != null:
+		globals["charname"] = name_keep
+
+
+func _draw_frame() -> void:
 	# The instance list is already in drawing order (deepest first, see _insert_by_depth).
 	# The live list is walked, as the runner does: an instance created during a Draw event
 	# at a later place in the list (lower depth) is drawn in the same frame (Sans's Gaster
@@ -1749,7 +1782,8 @@ func draw_frame() -> void:
 				var anchor = null
 				if i.owner < 0 and anchored_objs.has(i.obj):
 					anchor = Vector2(float(builtins.view_xview[0]), float(builtins.view_yview[0]))
-				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])), i.owner if (i.owner >= 0 and i.owner != scene_owner and private_objs.has(i.obj)) else -1, anchor)
+				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])), i.owner if (i.owner >= 0 and i.owner != scene_owner and private_objs.has(i.obj)) else -1, anchor,
+					i.owner if (i.owner >= 0 and faded_objs.has(i.obj)) else -1)
 			else:
 				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])))
 		var n0 := instances.size()
@@ -1768,6 +1802,8 @@ func draw_frame() -> void:
 			builtins.draw_backgrounds(true)
 	if draw_end_hook.is_valid():
 		draw_end_hook.call()
+	if party_draw.is_valid() and owners_on:
+		party_draw.call()
 	if builtins.canvas != null and builtins.canvas.has_method("gui_begin"):
 		builtins.canvas.gui_begin()
 	var list: Array = instances.duplicate()

@@ -34,6 +34,13 @@ const SHARED := {
 	"text_data_ja": true, "trophy_init_complete": true, "steam_int": true,
 	"window_scale": true, "window_xofs": true, "window_yofs": true,
 }
+# In a battle several players share (mp_battles.gd) the battle is everyone's (its menu, turn,
+# enemies, text): only these stay each player's own, so each SOUL takes its own hits.
+const PERSONAL := {
+	"hp": true, "maxhp": true, "at": true, "df": true, "wstrength": true, "adef": true,
+	"gold": true, "weapon": true, "armor": true, "item": true, "invc": true, "inv": true,
+	"control_state": true, "control_pressed": true, "control_new_state": true,
+}
 # Text boxes and faces: each player sees only their own (and the world's).
 const PRIVATE_ROOTS := ["obj_dialoguer", "obj_base_writer", "obj_choicer", "obj_face"]
 # Objects that run once per player with their own variables: the overworld menu.
@@ -160,7 +167,7 @@ func park() -> void:
 
 # After: the new world's lead is loaded (their values, camera and keys).
 func unpark() -> void:
-	_load(primary)
+	_load(primary, true)
 	loaded = primary
 	vm.ctx_owner = -1
 
@@ -303,12 +310,15 @@ func _save(i: int) -> void:
 	p.overlay["keys"] = eng.bi.keys
 
 
-func _load(i: int) -> void:
+# full: everything they have (a world being loaded); otherwise in a shared battle only their
+# own things, the battle's state staying as it is.
+func _load(i: int, full := false) -> void:
 	var p: Player = list[i]
 	var g: Dictionary = vm.globals
 	var ov: Dictionary = p.overlay
+	var party: bool = vm.party_on and not full
 	for k in g:
-		if SHARED.has(k):
+		if SHARED.has(k) or (party and not PERSONAL.has(k)):
 			continue
 		if ov.has(k):
 			g[k] = ov[k]
@@ -320,7 +330,7 @@ func _load(i: int) -> void:
 				g[k] = cur.duplicate(true)
 	# Globals only they have made so far.
 	for k in ov:
-		if not g.has(k) and not SHARED.has(k) and k != "view" and k != "keys" and not String(k).begins_with("time."):
+		if not party and not g.has(k) and not SHARED.has(k) and k != "view" and k != "keys" and not String(k).begins_with("time."):
 			g[k] = ov[k]
 	var t = _time()
 	if t != null:
@@ -335,16 +345,39 @@ func _load(i: int) -> void:
 
 # A player's value of a per-player global, wherever it is kept right now.
 func value(i: int, k: String, def = 0.0):
-	if i == loaded:
+	if i == loaded or _in_globals(i, k):
 		return vm.globals.get(k, def)
 	return list[i].overlay.get(k, def)
 
 
 func set_value(i: int, k: String, val) -> void:
-	if i == loaded:
+	if i == loaded or _in_globals(i, k):
 		vm.globals[k] = val
 	else:
 		list[i].overlay[k] = val
+
+
+# Player i's value of k is the loaded one: the world's own values (story flags), and in the
+# shared battle they are in, the battle's.
+func _in_globals(i: int, k: String) -> bool:
+	return SHARED.has(k) or (vm.party_on and not PERSONAL.has(k) and here(i))
+
+
+# A shared battle (mp_battles.gd) starts or ends in the loaded world. When it ends, everyone in
+# it leaves with the battle's state as it is now (as the one player would).
+func set_party(on: bool) -> void:
+	if on == vm.party_on:
+		return
+	if not on:
+		var g: Dictionary = vm.globals
+		for m in members:
+			if m == loaded:
+				continue
+			var ov: Dictionary = list[m].overlay
+			for k in g:
+				if not SHARED.has(k) and not PERSONAL.has(k):
+					ov[k] = g[k].duplicate(true) if g[k] is Array else g[k]
+	vm.party_on = on
 
 
 # ---------------------------------------------------------------- each frame
@@ -362,9 +395,13 @@ func before_step() -> void:
 		# A prompt of the engine's own (mp_ui.gd) takes their keys first.
 		if eng.get("mpui") != null:
 			eng.mpui.filter(p)
+		if eng.get("mpbattles") != null:
+			eng.mpbattles.filter(p)
 		# The lead's are worked out by the room's own obj_time.
 		if p.index != primary:
 			_input(p)
+	if eng.get("mpbattles") != null:
+		eng.mpbattles.before_step()
 
 
 func _input(p: Player) -> void:
@@ -410,6 +447,8 @@ func after_step() -> void:
 				keep.append(i)
 		vm.claimed = keep
 	bind()
+	if eng.get("mpbattles") != null:
+		eng.mpbattles.after_step()
 	if eng.get("mpsaves") != null:
 		eng.mpsaves.after_step()
 	# Each player's camera follows their own character the way the room's view does for
@@ -460,6 +499,8 @@ func bind() -> void:
 			free.append(i)
 		if i.owner == primary or (main == null and i.owner < 0):
 			main = i
+	if main == null:
+		main = _room_main()
 	for p in list:
 		if not p.active or not here(p.index):
 			continue
@@ -520,6 +561,26 @@ func bind() -> void:
 			p.back = null
 		elif p.back != null and here(p.index) and vm.room >= 0 and int(p.back[0]) != vm.room and not eng.mprooms._private_room(vm.room):
 			p.back = null     # they went somewhere else
+
+
+# No character the primary player can take (a persistent room everyone had left, so its parked
+# copy had none): another player's to stand beside, or one where the room places its player.
+func _room_main():
+	for i in vm.instances:
+		if not i.dead and i.obj == obj_main:
+			return i
+	if vm.room < 0 or (eng.get("mprooms") != null and eng.mprooms._private_room(vm.room)):
+		return null
+	var rd = vm.meta["rooms"].get(vm.room_names[vm.room], {})
+	for ri in rd.get("instances", []):
+		if ri[0] == "obj_mainchara":
+			var keep_ctx: int = vm.ctx_owner
+			switch_to(-1)
+			var inst = vm.instance_create(float(ri[1]), float(ri[2]), obj_main)
+			switch_to(keep_ctx)
+			inst.owner = -1
+			return inst
+	return null
 
 
 # ---------------------------------------------------------------- local tests

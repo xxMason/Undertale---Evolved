@@ -294,7 +294,8 @@ func encode_frame(who: int) -> PackedByteArray:
 			_put_v2(b, rec.cur_pos.get(id, Vector2.ZERO))
 			b.put_8(tag)
 			var anchor = meta[2] if meta.size() > 2 else null
-			b.put_u8(0 if anchor == null else 1)
+			var fade: int = meta[3] if meta.size() > 3 and meta[3] != null else -1
+			b.put_u8((0 if anchor == null else 1) | (2 if fade >= 0 and fade != who else 0))
 			if anchor != null:
 				_put_v2(b, anchor)
 			n += 1
@@ -325,6 +326,19 @@ func encode_frame(who: int) -> PackedByteArray:
 		frame["pp"] = Vector2(float(inst.v["x"]), float(inst.v["y"]))
 		frame["dx"] = float(inst.v["x"]) - float(inst.v.get("xprevious", inst.v["x"]))
 		frame["mv"] = float(inst.v.get("movement", 0.0)) == 1.0 and float(eng.mp.value(who, "interact")) == 0.0 and int(eng.vm.pending_room if here else vs.get("pending_room", -1)) == -1 and not (eng.mpui != null and eng.mpui.busy(who))
+	elif eng.get("mpbattles") != null and r != null:
+		# In a shared battle: their SOUL, moving inside the box at the battle's speed.
+		var h = eng.mpbattles.heart_for(who, r, here)
+		if h != null:
+			var ib = eng.mp.value(lead, "idealborder", null)
+			var row: Array = ib[0] if ib is Array and not ib.is_empty() and ib[0] is Array and (ib[0] as Array).size() >= 4 else []
+			frame["me"] = h.id
+			frame["pp"] = Vector2(float(h.v["x"]), float(h.v["y"]))
+			frame["dx"] = float(h.v["x"]) - float(h.v.get("xprevious", h.v["x"]))
+			frame["mv"] = float(h.v.get("movement", 0.0)) == 1.0 and float(eng.mp.value(lead, "mnfight", 0.0)) == 2.0 and not row.is_empty()
+			frame["spd"] = float(eng.mp.value(lead, "sp", 4.0))
+			if not row.is_empty():
+				frame["box"] = [float(row[0]) + 4.0, float(row[1]) - 16.0, float(row[2]) + 4.0, float(row[3]) - 16.0]
 	if eng.mpui != null:
 		var ust: Dictionary = eng.mpui.state_for(who)
 		if not ust.is_empty():
@@ -556,8 +570,10 @@ func _apply(fr: Dictionary) -> void:
 			var id := b.get_32()
 			var pos := Vector2(b.get_float(), b.get_float())
 			var tag := b.get_8()
-			var anchor = Vector2(b.get_float(), b.get_float()) if b.get_u8() == 1 else null
-			rec.owner(id, pos, tag, anchor)
+			var fl := b.get_u8()
+			var anchor = Vector2(b.get_float(), b.get_float()) if fl & 1 else null
+			# Faded on this screen: someone else's (any player but this PC's).
+			rec.owner(id, pos, tag, anchor, 99 if fl & 2 else -1)
 		elif code == 1:
 			rec.gui_begin()
 		else:
@@ -617,17 +633,28 @@ func _predict(fr: Dictionary) -> void:
 	if not predict or not mv:
 		return
 	var off := Vector2.ZERO
+	# Undertale walks 3 pixels a frame (left and right together cancel out); a SOUL moves at the
+	# battle's speed.
+	var spd := float(fr.get("spd", 3.0))
 	for f in keys:
 		var d: Vector2i = _pending[f]
-		# Undertale walks 3 pixels a frame (left and right together cancel out).
 		if d.x != 0 and d.x != _blocked.x:
-			off.x += d.x * 3.0
+			off.x += d.x * spd
 		if d.y != 0 and d.y != _blocked.y:
-			off.y += d.y * 3.0
+			off.y += d.y * spd
+	if fr.has("box"):
+		# A SOUL stays in the box (as obj_heart's Step keeps it).
+		var bx: Array = fr["box"]
+		var to: Vector2 = pp + off
+		to.x = clampf(to.x, float(bx[0]), maxf(float(bx[0]), float(bx[1])))
+		to.y = clampf(to.y, float(bx[2]), maxf(float(bx[2]), float(bx[3])))
+		off = to - pp
 	if off == Vector2.ZERO:
 		return
 	predicted = off
 	rec.shift[int(fr["me"])] = off
+	if fr.has("box"):
+		return     # a battle's view doesn't move
 	# The camera follows, inside the room.
 	var vw := 640.0 / maxf(rec.view_scale.x, 0.01)
 	var vh := 480.0 / maxf(rec.view_scale.y, 0.01)

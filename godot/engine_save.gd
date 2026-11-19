@@ -25,6 +25,7 @@ const DEFAULTS := {
 	"universes/migrated": false,
 	"coop/last_ip": "",       # Join by IP remembers the last address
 	"coop/sans_seen": "",     # universes (ids) where you've had the word from Sans about cheats
+	"multiplayer/difficulty_scaling": false,   # shared battles: more enemy HP per player (mp_battles.gd)
 }
 
 

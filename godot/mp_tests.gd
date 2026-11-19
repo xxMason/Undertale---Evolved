@@ -100,6 +100,30 @@ func frame(f: int) -> void:
 				_ok(seen.has("read"), "the friend read the sign before leaving")
 				_ok(eng.mp.list[1].inst == null, "the friend's character went when they left")
 				_end()
+		"spam":
+			# Host side: Eve's PC misbehaves (--mpspam: pause on and off, a flood of chat, a second
+			# hello, packets that aren't what the host expects) while Greg plays normally.
+			if eng.mp.active_count() == 3 and not seen.has("both"):
+				seen["both"] = f
+				seen["g0"] = _at(_index_of("Greg"))
+			if seen.has("both") and _index_of("Greg") >= 0 and _at(_index_of("Greg")).x > 0 and _at(_index_of("Greg")) != seen["g0"]:
+				seen["gmoved"] = 1
+			if seen.has("both") and f == int(seen["both"]) + 500:
+				_ok(_index_of("Again") < 0, "a second hello didn't add a player")
+				var gi := _index_of("Greg")
+				_ok(gi >= 0 and eng.mprooms.room_of(gi) != null and float(seen.get("gmoved", 0)) > 0, "Greg still plays (moved, now in %s)" % eng.mprooms.status())
+				var times: Array = eng.chat.lines.filter(func(l): return String(l["name"]) == "Eve").map(func(l): return int(l["at"]))
+				var worst := 0
+				for k in times.size():
+					var n := 0
+					for t in times:
+						if t >= int(times[k]) and t - int(times[k]) <= eng.mpnet.CHAT_WINDOW_MS:
+							n += 1
+					worst = maxi(worst, n)
+				_ok(times.size() > 0 and worst <= eng.mpnet.CHAT_BURST, "Eve's chat was let through %d at a time at most (%d lines kept)" % [worst, times.size()])
+				var ei := _index_of("Eve")
+				_ok(ei >= 0 and eng.mpnet.peers.values().all(func(pp): return (pp["keys"] as Array).size() <= eng.mpnet.KEYS_KEPT), "nobody's keys pile up")
+				_end()
 		"pmenu":
 			# Player 2 faces player 1 and opens the player menu with Enter: Check, Give item
 			# (a candy), Give gold, Heal (a candy, on player 1 at 10 HP).
@@ -312,6 +336,334 @@ func frame(f: int) -> void:
 			if f == 1490 and not seen.has("revived"):
 				_ok(false, "revived in time (%s)" % [bt.told])
 				_end()
+		"chaos":
+			# Stress: every player mashes keys at random for a long time (--pfeed chaos). Nothing
+			# is checked about the story; what must always hold is checked every 30 frames, and
+			# how long each frame of the whole game takes is measured. --warm: all the game's
+			# code compiled first, as playing does between frames (tests run frames back to back).
+			if not seen.has("warmed") and OS.get_cmdline_user_args().has("--warm"):
+				var tw := Time.get_ticks_msec()
+				while not eng.vm.warm_step(1000000):
+					pass
+				print("CHAOS warmed in %d ms" % (Time.get_ticks_msec() - tw))
+				seen["warmed"] = true
+				seen.erase("t")
+			var now := Time.get_ticks_usec()
+			if seen.has("t"):
+				var dt := now - int(seen["t"])
+				seen["sum"] = int(seen.get("sum", 0)) + dt
+				seen["n"] = int(seen.get("n", 0)) + 1
+				seen["max"] = maxi(int(seen.get("max", 0)), dt)
+				if dt > 33000:
+					seen["slow"] = int(seen.get("slow", 0)) + 1
+					print("CHAOS slow frame %d: %.1f ms (%s)" % [f, dt / 1000.0, eng.mprooms.status()])
+			seen["t"] = now
+			var mr = eng.mprooms
+			if f % 30 == 0:
+				var bad: Array = []
+				for p in eng.mp.list:
+					if not p.active:
+						continue
+					var r = mr.room_of(p.index)
+					if r == null:
+						bad.append("%s has no room" % p.name)
+						continue
+					var hp := float(_v(p.index, "hp"))
+					var mx := float(_v(p.index, "maxhp"))
+					if is_nan(hp) or hp > mx + 0.5 and not eng.mpbattles.battles.has(r):
+						bad.append("%s HP %s/%s" % [p.name, hp, mx])
+				# One character per player in the loaded world, inside the room.
+				var per := {}
+				for i in eng.vm.instances:
+					if not i.dead and i.obj == eng.mp.obj_main and i.owner >= 0:
+						per[i.owner] = int(per.get(i.owner, 0)) + 1
+						var x := float(i.v["x"])
+						var y := float(i.v["y"])
+						if x < -64 or y < -64 or x > float(eng.vm.room_width) + 64 or y > float(eng.vm.room_height) + 64:
+							bad.append("%s's character is outside the room (%d,%d in %dx%d)" % [eng.mp.list[i.owner].name, x, y, eng.vm.room_width, eng.vm.room_height])
+				for o in per:
+					if int(per[o]) > 1:
+						bad.append("%s has %d characters" % [eng.mp.list[o].name, per[o]])
+				# Nobody who left is still in a world, and every world's lead is one of its own.
+				for r in mr.rooms:
+					for m in r.members:
+						if m >= eng.mp.list.size() or not eng.mp.list[m].active:
+							bad.append("player %d left but is still in %s" % [m + 1, mr.room_name(r)])
+					if not r.members.is_empty() and not r.members.has(r.lead):
+						bad.append("the lead of %s (player %d) isn't in it" % [mr.room_name(r), r.lead + 1])
+				var total := 0
+				for r in mr.rooms:
+					total += (eng.vm.instances.size() if r == mr.cur else (r.w.vm_state.get("instances", []) as Array).size())
+				seen["peak_inst"] = maxi(int(seen.get("peak_inst", 0)), total)
+				if total > 3000:
+					bad.append("%d instances" % total)
+				if mr.rooms.size() > eng.mp.list.size() * 2:
+					bad.append("%d worlds" % mr.rooms.size())
+				for b in bad:
+					if not seen.has("bad:" + b):
+						seen["bad:" + b] = true
+						_ok(false, "f=%d %s (%s)" % [f, b, mr.status()])
+				if f % 600 == 0:
+					var rn: Array = []
+					for p in eng.mp.list.filter(func(q): return q.active):
+						rn.append("%s:%s:%d" % [p.name, mr.room_name(mr.room_of(p.index)), int(float(_v(p.index, "hp")))])
+					print("CHAOS f=%d worlds=%d inst=%d avg=%.2fms max=%.1fms slow=%d battles=%d %s" % [f, mr.rooms.size(), total, float(seen.get("sum", 0)) / maxf(1.0, float(seen.get("n", 1))) / 1000.0, float(seen.get("max", 0)) / 1000.0, int(seen.get("slow", 0)), eng.mpbattles.told.filter(func(t): return String(t).begins_with("party")).size(), rn])
+			if f == int(OS.get_cmdline_user_args()[OS.get_cmdline_user_args().find("--frames") + 1]) - 2:
+				_ok(true, "ran %d frames: avg %.2f ms, worst %.1f ms, %d over 33 ms, peak %d instances" % [f, float(seen.get("sum", 0)) / maxf(1.0, float(seen.get("n", 1))) / 1000.0, float(seen.get("max", 0)) / 1000.0, int(seen.get("slow", 0)), int(seen.get("peak_inst", 0))])
+				_end()
+		"spears":
+			# Undyne's battle with two players: each has their own green-SOUL shield, and her
+			# spears come at each of them in turn.
+			var mr = eng.mprooms
+			var bt = eng.mpbattles
+			var g: Dictionary = eng.vm.globals
+			if f == 20:
+				eng.mp.switch_to(0)
+				eng.vm.run_source("global.border = 12; global.battlegroup = 47; global.mercy = 1; instance_create(0, 0, obj_battler);")
+				eng.mp.switch_to(-1)
+			var rn: String = mr.room_name(mr.room_of(0))
+			if rn == "room_battle" and not seen.has("battle"):
+				seen["battle"] = f
+				_ok(mr.room_of(0) == mr.room_of(1), "player 2 is in Undyne's battle too (%s)" % mr.status())
+			if rn == "room_battle" and not seen.has("hp"):
+				seen["hp"] = true
+				for k in 2:
+					eng.mp.set_value(k, "maxhp", 99.0)
+					eng.mp.set_value(k, "hp", 99.0)
+			var b = bt.battles.get(mr.room_of(0))
+			if rn == "room_battle" and f % 6 == 0 and b != null:
+				var k = eng.mp.list[mr.room_of(0).lead].keys
+				if float(g.get("myfight", 0.0)) == 0.0 and float(g.get("mnfight", 0.0)) == 0.0 and float(g.get("bmenuno", 0.0)) == 0.0:
+					k.tap(39 if bt._bm(0) != 1.0 else 90)     # ACT
+				else:
+					k.tap(90)
+			if rn == "room_battle" and bt.obj_blocker >= 0:
+				var bl: Array = []
+				var sp := {}
+				for i in eng.vm.instances:
+					if i.dead:
+						continue
+					if i.obj == bt.obj_blocker:
+						bl.append(i.owner)
+						var dd: Dictionary = seen.get("dirs", {})
+						dd["%d:%s" % [i.owner, i.v.get("idealdir")]] = true
+						seen["dirs"] = dd
+					elif bt.obj_spears.has(i.obj):
+						sp[i.owner] = true
+				bl.sort()
+				if OS.get_cmdline_user_args().has("--mpverbose") and not bl.is_empty() and f % 5 == 0:
+					var d: Array = []
+					for i in eng.vm.instances:
+						if not i.dead and (i.obj == bt.obj_blocker or bt.obj_spears.has(i.obj)):
+							d.append("%s:%d@%d,%d %s" % [eng.vm.obj_names[i.obj].substr(4, 6), i.owner, int(i.v["x"]), int(i.v["y"]), ("dir%s/%s" % [i.v.get("dir"), i.v.get("idealdir")]) if i.obj == bt.obj_blocker else ("s%s v%s,%s" % [i.v.get("site"), i.v.get("hspeed"), i.v.get("vspeed")])])
+					print("SP f=%d hp=%s,%s invc=%s,%s %s" % [f, _v(0, "hp"), _v(1, "hp"), _v(0, "invc"), _v(1, "invc"), d])
+				if not bl.is_empty():
+					seen["blockers"] = bl
+					if seen.has("first"):
+						seen["second"] = true
+					var so: Array = sp.keys()
+					so.sort()
+					if so.size() > seen.get("spear_owners", []).size():
+						seen["spear_owners"] = so
+				# The first attack (all from above) ends; the second has spears from the sides.
+				if bl.is_empty() and seen.has("blockers") and not seen.has("first"):
+					seen["first"] = f
+				if bl.is_empty() and seen.get("second", false) and not seen.has("over"):
+					seen["over"] = f
+					_ok(seen["blockers"] == [0, 1], "each player had their own shield (%s)" % [seen["blockers"]])
+					_ok(seen.get("spear_owners", []) == [0, 1], "spears came at both players (%s)" % [seen.get("spear_owners", [])])
+					var left := 0
+					for i in eng.vm.instances:
+						if not i.dead and (i.obj == bt.obj_blocker or bt.obj_spears.has(i.obj)):
+							left += 1
+					_ok(left == 0, "no shields or spears left after the attack (%d)" % left)
+					if not OS.get_cmdline_user_args().has("--spearleft"):
+						_ok(float(_v(0, "hp")) < 99.0 and float(_v(1, "hp")) < 99.0, "unblocked spears hurt each player (HP %s and %s)" % [_v(0, "hp"), _v(1, "hp")])
+					if OS.get_cmdline_user_args().has("--spearleft"):
+						var dd: Dictionary = seen.get("dirs", {})
+						_ok(dd.has("1:0.0") and not dd.has("0:0.0"), "player 2's Left turned only player 2's shield (%s)" % [dd.keys()])
+					_end()
+			if f == 2900 and not seen.has("over"):
+				_ok(false, "a spear attack came (%s)" % [seen])
+				_end()
+		"loadscene":
+			# Toriel's scene at the training dummy starts as room_ruins4 loads. Player 1 goes in
+			# while player 2 is in room_ruins3: the scene waits, player 2 says Yes, is brought
+			# beside player 1, and then it plays, Toriel following player 1.
+			var mr = eng.mprooms
+			var args := OS.get_cmdline_user_args()
+			var lroom: String = args[args.find("--lsroom") + 1] if args.has("--lsroom") else "room_ruins4"
+			var lobj: String = args[args.find("--lsobj") + 1] if args.has("--lsobj") else "obj_toroverworld4"
+			if f == 20:
+				var keep: int = eng.vm.ctx_owner
+				mr.switch(mr.room_of(0))
+				mr._send(0, eng.vm.room_names.find(lroom))
+				eng.mp.switch_to(keep)
+			if f == 40:
+				_ok(mr.room_name(mr.room_of(0)) == lroom and mr.room_of(1) != mr.room_of(0), "player 1 is in %s, player 2 elsewhere (%s)" % [lroom, mr.status()])
+				_ok(eng.mpui.waits.has(0), "player 1 is waiting (%s)" % [eng.mpui.waits.get(0)])
+				_ok(eng.mpui.prompts.has(1), "player 2 is asked to come")
+				var keep = mr.cur
+				mr.switch(mr.room_of(0))
+				_ok(_count(lobj) == 0 and float(_v(0, "interact")) == 0.0, "Toriel's scene hasn't started")
+				mr.switch(keep)
+			if f == 80:
+				_ok(mr.room_of(0) == mr.room_of(1), "player 2 was brought to player 1 (%s)" % mr.status())
+				var keep = mr.cur
+				mr.switch(mr.room_of(0))
+				_ok(_count(lobj) == 1, "Toriel's scene started (%d Toriels)" % _count(lobj))
+				_ok(eng.vm.follow_owner == 0, "she follows player 1 (%s)" % eng.vm.follow_owner)
+				mr.switch(keep)
+				_end()
+		"pickup":
+			# The Faded Ribbon in room_ruins14: each player has their own. Player 1 takes theirs;
+			# player 2's is still there for them, and they take it too.
+			var ro := int(eng.vm.obj_index.get("obj_ribbon_pickup", -1))
+			var copies: Array = []
+			for i in eng.vm.instances:
+				if not i.dead and i.obj == ro:
+					copies.append(i.owner)
+			copies.sort()
+			if OS.get_cmdline_user_args().has("--mpverbose") and f % 20 == 0:
+				print("PU f=%d p1=%s p2=%s copies=%s flags=%s %s items=%s %s int=%s %s" % [f, _at(0), _at(1), copies, _v(0, "mp_pflags"), eng.mp.value(1, "mp_pflags", {}), _items(0), _items(1), _v(0, "interact"), _v(1, "interact")])
+			if f == 10:
+				_ok(copies == [0, 1], "each player has their own ribbon (%s)" % [copies])
+			var put := func(k: int, at: Vector2) -> void:
+				var pi = eng.mp.list[k].inst
+				for key in ["x", "xprevious"]:
+					pi.v[key] = at.x
+				for key in ["y", "yprevious"]:
+					pi.v[key] = at.y
+			if f == 5:
+				put.call(0, Vector2(177, 663))
+				put.call(1, Vector2(120, 684))
+			if f == 110:
+				_ok(float(_v(0, "mp_pflags").get("100", 0.0)) == 1.0 and _items(0)[0] == 12.0, "player 1 took the ribbon (flags %s, items %s)" % [_v(0, "mp_pflags"), _items(0)])
+				_ok(copies == [1], "player 2's ribbon is still there (%s)" % [copies])
+				_ok(float(eng.mp.value(1, "mp_pflags", {}).get("100", 0.0)) == 0.0, "player 2 hasn't taken one")
+				put.call(1, Vector2(177, 663))
+			if f == 240:
+				_ok(float(eng.mp.value(1, "mp_pflags", {}).get("100", 0.0)) == 1.0 and _items(1)[0] == 12.0, "player 2 took their own ribbon (items %s)" % [_items(1)])
+				_ok(copies.is_empty(), "no ribbons left (%s)" % [copies])
+				_ok(_items(0)[0] == 12.0, "player 1 still has theirs")
+				_end()
+		"who":
+			# In a shared battle player 1 picks ITEM, a Monster Candy, and "Who?" Greg: Greg
+			# gets the 10 HP, player 1 keeps their own.
+			var mr = eng.mprooms
+			var bt = eng.mpbattles
+			var g: Dictionary = eng.vm.globals
+			var rn: String = mr.room_name(mr.room_of(0))
+			if rn == "room_battle" and not seen.has("battle"):
+				seen["battle"] = f
+				eng.mp.set_value(0, "maxhp", 99.0)
+				eng.mp.set_value(0, "hp", 90.0)
+				eng.mp.set_value(1, "hp", 5.0)
+			var b = bt.battles.get(mr.room_of(0))
+			if rn == "room_battle":
+				eng.mp.set_value(0, "invc", 30.0)
+				eng.mp.set_value(1, "invc", 30.0)
+			var fed: bool = bt.told.any(func(t): return String(t).begins_with("fed Greg"))
+			if rn == "room_battle" and f % 6 == 0 and b != null and mr.room_of(0).lead == 0 and not fed:
+				var k = eng.mp.list[0].keys
+				var bm := float(g.get("bmenuno", 0.0))
+				if float(g.get("myfight", 0.0)) == 0.0 and float(g.get("mnfight", 0.0)) == 0.0:
+					if bm == 0.0:
+						k.tap(39 if bt._bm(0) != 2.0 else 90)
+					elif bm >= 3.0 and bm < 4.0:
+						if b.who == 1 and not seen.has("shot"):
+							seen["shot"] = true
+							eng.bot_shot("who")
+						k.tap(90 if b.who != 0 else 40)
+					else:
+						k.tap(90)
+				else:
+					k.tap(90)
+			if fed and not seen.has("fed"):
+				seen["fed"] = f
+				_ok(float(_v(1, "hp")) == 15.0, "Greg got the candy's 10 HP (%s)" % _v(1, "hp"))
+				_ok(float(_v(0, "hp")) == 90.0, "player 1 kept their own HP (%s)" % _v(0, "hp"))
+				_ok(_items(0) == [0.0, 0.0] or float(eng.mp.value(0, "item", [[0]])[0][0]) == 0.0, "player 1's candy is gone (%s)" % [_items(0)])
+				_ok(_told(1, "Kyle gave you an item: +10 HP."), "Greg was told")
+			if seen.has("fed") and f == int(seen["fed"]) + 30:
+				_end()
+			if f == 1490 and not seen.has("fed"):
+				_ok(false, "the item was used on Greg in time (%s)" % [bt.told])
+				_end()
+		"afk":
+			# Player 2 is pulled into player 1's battle and then presses nothing: on their turn,
+			# after the AFK time (1.5 s here), the menu passes back to player 1.
+			var mr = eng.mprooms
+			var bt = eng.mpbattles
+			var g: Dictionary = eng.vm.globals
+			bt.afk_frames = 45
+			var rn: String = mr.room_name(mr.room_of(0))
+			if rn == "room_battle" and not seen.has("battle"):
+				seen["battle"] = f
+				for k in 2:
+					eng.mp.set_value(k, "maxhp", 99.0)
+					eng.mp.set_value(k, "hp", 99.0)
+			var b = bt.battles.get(mr.room_of(0))
+			if rn == "room_battle" and f % 6 == 0 and b != null and mr.room_of(0).lead == 0:
+				var k = eng.mp.list[0].keys
+				if float(g.get("myfight", 0.0)) == 0.0 and float(g.get("mnfight", 0.0)) == 0.0 and float(g.get("bmenuno", 0.0)) == 0.0:
+					k.tap(39 if bt._bm(0) != 3.0 else 90)
+				else:
+					k.tap(90)
+			if bt.told.has("turn Greg") and not seen.has("greg"):
+				seen["greg"] = f
+			if bt.told.has("away Greg") and not seen.has("away"):
+				seen["away"] = f
+				_ok(int(f) - int(seen.get("greg", f)) >= 44, "Greg's turn lasted the AFK time (%d frames)" % (int(f) - int(seen.get("greg", f))))
+				_ok(mr.room_of(0).lead == 0, "the menu went back to Kyle")
+				_ok(_told(0, "Greg is away: Kyle's turn.") and _told(1, "Greg is away: Kyle's turn."), "both were told")
+			if seen.has("away") and f == int(seen["away"]) + 60:
+				_ok(rn == "room_battle" or bt.told.has("end won"), "the battle went on")
+				_end()
+			if f == 1490 and not seen.has("away"):
+				_ok(false, "Greg was passed over in time (%s)" % [bt.told])
+				_end()
+		"leavelead":
+			# Three players in one battle; player 2 leaves the game on their own turn (they are
+			# the world's lead then). They must really go: out of the battle, the turn passed on,
+			# and their place free for someone new.
+			var mr = eng.mprooms
+			var bt = eng.mpbattles
+			var g: Dictionary = eng.vm.globals
+			var rn: String = mr.room_name(mr.room_of(0))
+			if rn == "room_battle" and not seen.has("battle"):
+				seen["battle"] = f
+				for k in 3:
+					eng.mp.set_value(k, "maxhp", 99.0)
+					eng.mp.set_value(k, "hp", 99.0)
+			var r0 = mr.room_of(0)
+			if rn == "room_battle" and f % 6 == 0 and bt.battles.get(r0) != null and r0.lead == 0 and seen.has("rejoined"):
+				var k = eng.mp.list[0].keys
+				if float(g.get("myfight", 0.0)) == 0.0 and float(g.get("mnfight", 0.0)) == 0.0 and float(g.get("bmenuno", 0.0)) == 0.0:
+					k.tap(39 if bt._bm(0) != 3.0 else 90)
+				else:
+					k.tap(90)
+			if rn == "room_battle" and not seen.has("given") and bt.battles.get(r0) != null and eng.vm.party_on and float(g.get("myfight", 0.0)) == 0.0 and float(g.get("mnfight", 0.0)) == 0.0:
+				seen["given"] = f
+				bt._set_lead(r0, 1)     # Greg's turn
+			if seen.has("given") and not seen.has("left") and r0 != null and r0.lead == 1:
+				seen["left"] = f
+				eng.mp.remove_player(1)
+				_ok(not eng.mp.list[1].active, "Greg is gone")
+				_ok(mr.room_of(1) == null, "Greg isn't in any world")
+				_ok(r0.lead != 1 and r0.members.has(r0.lead), "the turn went to someone still there (player %d)" % (r0.lead + 1))
+				_ok(eng.mp.active_count() == 2, "two players left (%d)" % eng.mp.active_count())
+			if seen.has("left") and f == int(seen["left"]) + 30:
+				var idx: int = eng.mp.add_player("Dan")
+				_ok(idx == 1, "a new friend takes the free place (player %d)" % (idx + 1))
+				seen["rejoined"] = f
+			if seen.has("rejoined") and f == int(seen["rejoined"]) + 60:
+				_ok(eng.mp.list[1].active and eng.mp.list[1].name == "Dan" and mr.room_of(1) != null, "Dan is playing (%s)" % mr.status())
+				_ok(rn == "room_battle" or bt.told.has("end won"), "the battle went on")
+				_end()
+			if f == 1490 and not seen.has("left"):
+				_ok(false, "Greg never had the turn (%s)" % [bt.told])  # (given at the battle's first menu)
+				_end()
 		"join":
 			# Stage 8: player 2 has their menu open, so player 1's battle doesn't pull them in;
 			# then they close it and, by where player 1 stood ("Kyle is in a battle"), press
@@ -399,8 +751,12 @@ func frame(f: int) -> void:
 			# player 1 walks into Toriel's scene in room_ruins19. The scene waits; player 2 is
 			# asked once their text is over, says Yes, and is brought beside player 1; the
 			# scene then plays, on both screens.
+			# Toriel's welcome in her house waits for the party too (it starts as the room loads):
+			# player 1 is asked first and says No, so it plays for player 2 alone.
 			var mr = eng.mprooms
 			var ui = eng.mpui
+			if f == 70:
+				_ok(ui.prompts.has(0), "player 2's scene in the house asks player 1 first")
 			if f == 200:
 				_ok(ui.waits.has(0) and String(ui.waits[0]["text"]).begins_with("Waiting for 1 more player"), "player 1 is waiting for player 2 (%s)" % [ui.waits.get(0)])
 				_ok(float(_v(0, "interact")) == 0.0, "the scene hasn't started")
@@ -409,7 +765,7 @@ func frame(f: int) -> void:
 				seen["asked"] = f
 			if seen.has("asked") and not seen.has("tp") and mr.room_of(1) == mr.room_of(0):
 				seen["tp"] = f
-				_ok(_at(1).distance_to(_at(0)) < 4.0, "player 2 is beside player 1 (%s and %s)" % [_at(1), _at(0)])
+				_ok(_at(1).distance_to(_at(0)) > 12.0 and _at(1).distance_to(_at(0)) < 40.0, "player 2 stands beside player 1, not on them (%s and %s)" % [_at(1), _at(0)])
 			if seen.has("tp") and f == int(seen["tp"]) + 30:
 				_ok(float(_v(0, "interact")) == 1.0, "the scene started for player 1")
 				_ok(not ui.waits.has(0), "player 1 isn't waiting any more")
@@ -475,3 +831,11 @@ func _told(k: int, text: String) -> bool:
 		if int(t[0]) == k and String(t[1]) == text:
 			return true
 	return false
+
+
+# The player with that name still playing, or -1.
+func _index_of(nm: String) -> int:
+	for p in eng.mp.list:
+		if p.active and p.name == nm:
+			return p.index
+	return -1

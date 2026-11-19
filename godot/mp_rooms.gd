@@ -78,13 +78,15 @@ func teleport(p: int, to: int) -> void:
 	switch(src)
 	var ti = mp.list[to].inst
 	if ti != null and not ti.dead:
-		mp.list[p].back = [k, float(ti.v["x"]), float(ti.v["y"])]
+		mp.list[p].back = [k, float(ti.v["x"]), float(ti.v["y"]), "beside"]
 	_log("%s teleports to %s in %s" % [mp.list[p].name, mp.list[to].name, vm.room_names[k]])
 	_send(p, k)
 	mp.switch_to(keep)
 
 
 func room_name(r: Room) -> String:
+	if r == null:
+		return "-"
 	var k: int = vm.room if r == cur else int(r.w.vm_state.get("room", -1))
 	return vm.room_names[k] if k >= 0 and k < vm.room_names.size() else "-"
 
@@ -137,6 +139,19 @@ func left(p: int) -> void:
 		r.lead = r.members[0]
 		if r == cur:
 			_apply_people(r)
+
+
+# Player p is leaving the game: if they lead their world, the next one still in it does.
+func hand_over(p: int) -> void:
+	var r := room_of(p)
+	if r == null or r.lead != p:
+		return
+	for m in r.members:
+		if m != p and mp.list[m].active:
+			r.lead = m
+			if r == cur:
+				_apply_people(r)
+			return
 
 
 # ---------------------------------------------------------------- room changes

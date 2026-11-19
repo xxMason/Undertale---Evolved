@@ -20,6 +20,10 @@ const GATHER := [
 	"obj_torieltrigger10", "obj_torieltrigger11", "obj_torieltrigger12",
 ]
 
+# Scenes that start as their room loads (Toriel at the training dummy, in her house): the
+# event that starts them waits the same way, and runs once everyone has answered.
+const LOAD_GATE := {"obj_torieltrigger3": [7, 4], "obj_torieltrigger6": [0, 0]}   # [event type, sub]: room start, Create
+
 var eng
 var vm
 var mp
@@ -37,11 +41,19 @@ func setup(e) -> void:
 	for nm in GATHER:
 		if vm.obj_index.has(nm):
 			vm.gate_objs[int(vm.obj_index[nm])] = true
+	for nm in LOAD_GATE:
+		if vm.obj_index.has(nm):
+			vm.load_gate_objs[int(vm.obj_index[nm])] = LOAD_GATE[nm]
 	vm.event_gate = gate
 
 
 # The machine is about to run a story trigger's collision with player p's character.
 func gate(inst, p: int) -> bool:
+	# A room-load scene held for someone who went ahead (Toriel's house, before her scene in
+	# the room before it) gives way to another player's scene: the story goes in order, and
+	# the held one plays again when its room next loads.
+	if gather != null and gather["inst"] != inst and gather.has("replay") and not gather["open"] and int(gather["by"]) != p:
+		_drop_gather()
 	if gather != null:
 		if gather["inst"] == inst:
 			if gather["open"]:
@@ -55,6 +67,12 @@ func gate(inst, p: int) -> bool:
 		_play(inst, p)
 		return true
 	gather = {"inst": inst, "by": p, "ask": {}, "open": false}
+	if vm.load_gate_objs.has(inst.obj):
+		# Its start runs again once the party has answered, in this world.
+		gather["replay"] = vm.load_gate_objs[inst.obj]
+		gather["room"] = eng.mprooms.cur
+		if int(gather["replay"][0]) == vm.EV_CREATE:
+			inst.v["conversation"] = 0.0     # its Step reads it meanwhile
 	for o in away:
 		gather["ask"][o] = "queued"
 	_ask_free()
@@ -137,7 +155,24 @@ func _play(inst, p: int) -> void:
 		if s[0] == inst:
 			return
 	vm.scene_owner = p
+	vm.follow_owner = p
 	playing.append([inst, p, eng.mprooms.cur, 0])
+
+
+# Before a world's step (mp_players.gd): a room-load scene everyone has answered for starts.
+func before_step() -> void:
+	if gather == null or not gather["open"] or not gather.has("replay") or gather["room"] != eng.mprooms.cur:
+		return
+	var inst = gather["inst"]
+	var rp: Array = gather["replay"]
+	gather.erase("replay")
+	if inst.dead:
+		gather = null
+		return
+	var keep: int = vm.ctx_owner
+	mp.switch_to(int(gather["by"]))
+	vm.perform_event(inst, int(rp[0]), int(rp[1]), null)
+	mp.switch_to(keep)
 
 
 func _scenes_frame() -> void:
@@ -156,15 +191,20 @@ func _scenes_frame() -> void:
 
 # After every world's frame (engine.gd), before the host's world is loaded again: teleports,
 # and players who became free get their question.
+func _drop_gather() -> void:
+	for o in gather["ask"]:
+		ui.close(o)
+	ui.set_wait(gather["by"], "")
+	gather = null
+
+
 func end_frame() -> void:
 	_scenes_frame()
 	if gather != null:
 		var inst = gather["inst"]
-		if inst == null or inst.dead or not mp.list[gather["by"]].active:
-			for o in gather["ask"]:
-				ui.close(o)
-			ui.set_wait(gather["by"], "")
-			gather = null
+		var left_room: bool = gather.has("room") and eng.mprooms.room_of(int(gather["by"])) != gather["room"]
+		if inst == null or inst.dead or not mp.list[gather["by"]].active or left_room:
+			_drop_gather()
 		else:
 			_ask_free()
 	for m in _moves:

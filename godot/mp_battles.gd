@@ -36,6 +36,7 @@ const BATTLE_ROOMS := ["room_battle"]   # rooms a battle is shared in (Flowey's 
 const AIM_SKIP := ["obj_battlecontroller", "obj_heart", "obj_lborder", "obj_rborder", "obj_uborder",
 	"obj_dborder", "OBJ_WRITER", "OBJ_INSTAWRITER", "obj_time", "obj_shaker"]
 const ENTER := 13
+const AFK_SECONDS := 20.0      # a player whose turn it is and who presses nothing this long is passed over
 
 
 class Battle:
@@ -46,13 +47,22 @@ class Battle:
 	var gold := []         # [lead, their gold] last frame
 	var revive_sel := false
 	var scale := 1.0       # how much the enemies' HP has been raised (Co-op Difficulty Scaling)
+	var idle := 0          # frames the lead has pressed nothing in the menu
+	var who := -1          # ITEM "Who?": the row chosen (-1 closed)
+	var who_list: Array = []   # its rows: the lead, then the others still up
+	var feed := -1         # the teammate this frame's item is for (the game heals "its" player)
+	var keep_hp := [0.0, 0.0]  # the lead's HP and max HP meanwhile
 
 
 var eng
 var vm
 var mp
 var obj_heart := -1
+var obj_blocker := -1      # Undyne's green-SOUL shield (obj_spearblocker)
+var obj_spears: Array = [] # the spears it blocks (obj_blockbullet, obj_blockbullet2)
+var _spear_n := 0
 var pull_range := PULL_RANGE   # 0: nobody is pulled in (solo-only fights)
+var afk_frames := int(AFK_SECONDS * 30.0)
 var battles := {}          # Room (mp_rooms.gd) -> Battle
 var _moves: Array = []     # [player, Room]: joins to make after this frame's worlds ran
 var told: Array = []       # for the checks: what happened ("down Greg", "revive Greg", "turn Greg")
@@ -66,6 +76,13 @@ func setup(e) -> void:
 	if obj_heart >= 0:
 		vm.faded_objs[obj_heart] = true
 		vm.aim_obj = obj_heart
+	obj_blocker = int(vm.obj_index.get("obj_spearblocker", -1))
+	for nm in ["obj_blockbullet", "obj_blockbullet2"]:
+		if vm.obj_index.has(nm):
+			obj_spears.append(int(vm.obj_index[nm]))
+	for o in [obj_blocker] + obj_spears:
+		if o >= 0:
+			vm.faded_objs[o] = true
 	vm.party_draw = _draw
 	vm.party_name = func() -> String: return mp.list[eng.mprooms.cur.lead].name
 
@@ -122,6 +139,7 @@ func before_step() -> void:
 	if b == null:
 		return
 	_revive_keys(b)
+	_who_keys(b)
 
 
 # After the world's step (mp_players.gd).
@@ -148,10 +166,13 @@ func after_step() -> void:
 	for m in b.down.keys():
 		if not r.members.has(m):
 			b.down.erase(m)
+	_fed(r, b)
 	_hearts(r, b)
+	_spears_split(r, b)
 	_scale(r, b)
 	_downs(r, b)
 	_new_turn(r, b)
+	_away(r, b)
 	_share_gold(r, b)
 	_visibility(r, b)
 	if b.revive_sel:
@@ -224,6 +245,69 @@ func _hearts(r, b: Battle) -> void:
 		h.owner = m
 	for h in _hearts_now():
 		vm.inst_keys[h.id] = mp.list[h.owner].keys
+
+
+# Undyne's green SOUL (docs/MULTIPLAYER.md, "Encounters and battles"): every player up has
+# their own shield, turned with their own keys, and each spear comes at one of them, in turn,
+# so the party can't all block one direction. A spear is its player's: their shield blocks it
+# (or it hits them). The room's own shield is the lead's and ends the attack as in the game;
+# the others' only block.
+func _spears_split(r, b: Battle) -> void:
+	if obj_blocker < 0:
+		return
+	var orig = null
+	var copies: Array = []
+	for i in vm.instances:
+		if not i.dead and i.obj == obj_blocker:
+			if i.v.get("mp_copy", false):
+				copies.append(i)
+			else:
+				orig = i
+	var alive := _alive(r, b)
+	if orig == null:
+		if copies.is_empty():
+			return
+		# The attack is over: the copies go, with any spear still coming at their players.
+		for c in copies:
+			c.dead = true
+		for i in vm.instances:
+			if not i.dead and obj_spears.has(i.obj):
+				i.dead = true
+		vm.inst_version += 1
+		for m in r.members:
+			vm.player_insts[m].erase(obj_blocker)
+		return
+	orig.owner = r.lead
+	vm.player_insts[r.lead][obj_blocker] = orig
+	var have := {r.lead: true}
+	for c in copies:
+		if not alive.has(c.owner):
+			c.dead = true
+			vm.inst_version += 1
+			vm.player_insts[c.owner].erase(obj_blocker)
+		else:
+			have[c.owner] = true
+	for m in alive:
+		if have.has(m):
+			continue
+		var c = vm.instance_create(float(orig.v["x"]), float(orig.v["y"]), obj_blocker, false)
+		for k in orig.v:
+			var val = orig.v[k]
+			c.v[k] = val.duplicate(true) if val is Array or val is Dictionary else val
+		c.alarm = orig.alarm.duplicate()
+		c.owner = m
+		c.v["mp_copy"] = true
+		c.v["refuse"] = 2.0      # Undertale's own "don't end the attack" (the lead's ends it)
+		vm.player_insts[m][obj_blocker] = c
+	for i in vm.instances:
+		if i.dead or not obj_spears.has(i.obj):
+			continue
+		if i.owner < 0:
+			i.owner = alive[_spear_n % alive.size()]
+			_spear_n += 1
+		elif not alive.has(i.owner):
+			i.dead = true        # its player went down
+			vm.inst_version += 1
 
 
 func scaling_on() -> bool:
@@ -317,6 +401,93 @@ func _new_turn(r, b: Battle) -> void:
 	for q in b.joining:
 		_moves.append([q, r])
 	b.joining.clear()
+
+
+# ---------------------------------------------------------------- ITEM: "Who?"
+
+# The lead is choosing an item and someone else in the battle is up: Z on an item asks who it
+# is for.
+func _who_possible(r, b: Battle) -> bool:
+	var bm := float(_g("bmenuno"))
+	return bm >= 3.0 and bm < 4.0 and float(_g("myfight")) == 0.0 and float(_g("mnfight")) == 0.0 		and _alive(r, b).size() > 1
+
+
+func _who_keys(b: Battle) -> void:
+	var r = eng.mprooms.cur
+	if not _who_possible(r, b):
+		b.who = -1
+		return
+	var k = mp.list[r.lead].keys
+	var z: bool = k.pressed(90) or k.pressed(ENTER)
+	if b.who < 0:
+		var t = vm.first_of(float(vm.obj_index.get("obj_time", -1)), {"self": null, "other": null})
+		var side: bool = t != null and (float(t.v.get("left", 0.0)) != 0.0 or float(t.v.get("right", 0.0)) != 0.0)
+		if z and not side:
+			b.who = 0
+			b.who_list = [r.lead] + _alive(r, b).filter(func(m): return m != r.lead)
+			k.clear(90)
+			k.clear(ENTER)
+			_snd("snd_select")
+		return
+	for c in [38, 40]:
+		if k.pressed(c):
+			b.who = wrapi(b.who + (1 if c == 40 else -1), 0, b.who_list.size())
+			_snd("snd_squeak")
+	for c in [37, 38, 39, 40]:
+		if k.held(c):
+			k.clear(c)
+	if k.pressed(88) or k.pressed(16):
+		b.who = -1
+		k.clear(88)
+		k.clear(16)
+		return
+	if not z:
+		return
+	# This Z reaches the game, which uses the item on its own player as usual: for this frame
+	# that player has the teammate's HP.
+	var to: int = b.who_list[clampi(b.who, 0, b.who_list.size() - 1)]
+	b.who = -1
+	if to == r.lead or not mp.list[to].active:
+		return
+	b.feed = to
+	b.keep_hp = [float(mp.value(r.lead, "hp", 0.0)), float(mp.value(r.lead, "maxhp", 20.0))]
+	mp.set_value(r.lead, "hp", float(mp.value(to, "hp", 0.0)))
+	mp.set_value(r.lead, "maxhp", float(mp.value(to, "maxhp", 20.0)))
+
+
+# After the step that used an item on a teammate: they get the HP, the lead theirs back.
+func _fed(r, b: Battle) -> void:
+	if b.feed < 0:
+		return
+	var to := b.feed
+	b.feed = -1
+	var got := float(mp.value(r.lead, "hp", 0.0))
+	var was := float(mp.value(to, "hp", 0.0))
+	mp.set_value(to, "hp", got)
+	mp.set_value(r.lead, "hp", float(b.keep_hp[0]))
+	mp.set_value(r.lead, "maxhp", float(b.keep_hp[1]))
+	_log("fed %s %+d" % [mp.list[to].name, int(got - was)])
+	eng.mpsaves.tell(to, "%s gave you an item: +%d HP." % [mp.list[r.lead].name, int(got - was)])
+
+
+# A player whose turn it is and who presses nothing in the menu for AFK_SECONDS is passed
+# over: the next player up takes the menu as it is.
+func _away(r, b: Battle) -> void:
+	if float(_g("myfight")) != 0.0 or float(_g("mnfight")) != 0.0 or not mp.list[r.lead].keys.pressed_list().is_empty():
+		b.idle = 0
+		return
+	b.idle += 1
+	if b.idle < afk_frames:
+		return
+	b.idle = 0
+	var nx := _next_up(r, b, r.lead)
+	if nx == r.lead or nx < 0:
+		return
+	var who: String = mp.list[r.lead].name
+	_set_lead(r, nx)
+	for m in r.members:
+		eng.mpsaves.tell(m, "%s is away: %s's turn." % [who, mp.list[nx].name])
+	_log("away %s" % who)
 
 
 # The gold a battle gives goes to every player in it (the game gives it to its lead).
@@ -574,6 +745,18 @@ func _draw_party(r, b: Battle, rec) -> void:
 				eng.bi.draw_font = int(vm.consts.get("fnt_small", -1.0))
 				var w: float = eng.bi.text_width(nm)
 				_text(float(h.v["x"]) + 8.0 - w / 2.0, float(h.v["y"]) - 12.0, nm, 16777215, "fnt_small", 1.0)
+	# ITEM: "Who?" beside the item list.
+	if b.who >= 0 and _who_possible(r, b):
+		rec.owner(-900011, Vector2.ZERO, -1)
+		var h := 40.0 + b.who_list.size() * 30.0
+		eng.bi._rect(420.0, 120.0, 609.0, 119.0 + h, false, Color.WHITE)
+		eng.bi._rect(423.0, 123.0, 606.0, 116.0 + h, false, Color.BLACK)
+		_text(440.0, 128.0, "Who?", 16777215, "fnt_main", 1.0)
+		for k in b.who_list.size():
+			var y := 160.0 + k * 30.0
+			_text(462.0, y, mp.list[b.who_list[k]].name, 65535 if k == b.who else 16777215, "fnt_main", 1.0)
+			if k == b.who:
+				eng.bi._draw_sprite_ext(int(vm.sprite_index.get("spr_heart", -1)), 0, 438.0, y + 6.0, 1, 1, 0, 255, 1)
 	# MERCY: the Revive row (everyone sees the menu of the player whose turn it is).
 	if _revive_shown(b):
 		rec.owner(-900010, Vector2.ZERO, -1)

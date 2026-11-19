@@ -137,6 +137,8 @@ var primary_owner := 0
 # variables (Inst.pv), so several players can have it open at once.
 var multi_objs := {}             # object index -> true
 var gate_objs := {}              # object index -> true: story triggers that can wait for everyone
+var load_gate_objs := {}         # object index -> [event type, sub]: scenes that start as a room loads, which can wait too
+var follow_owner := -1           # the player whose story this world's room objects follow (Toriel walks ahead of them)
 var party_on := false            # a battle several players share (mp_battles.gd): its state is everyone's
 var scene_owner := -1            # the player whose story scene this world is playing: their text is everyone's
 var event_gate := Callable()     # (instance, player) -> bool: may the trigger run now
@@ -365,12 +367,19 @@ func _load_fast(name: String, src: String, nodes: Array):
 
 
 # Compiles not-yet-loaded translated scripts for up to `budget_usec`, so they are ready
-# before a battle needs them (called while the fight-select screen is idle).
+# before a battle needs them (called while a menu is idle, and a little at a time between
+# frames while playing).
+#
+# Godot compiles a file in one go, however long it takes, so the biggest few (a whole
+# second for some) would stop the game. With max_bytes, files bigger than that are left
+# for later: for a call without it (a menu), or for when the game first uses them.
+const WARM_NEVER := ["gml_Script_scr_loadcredits"]   # only the end credits; 1.3 s to compile
 var _warm_list: Array = []
 var _warm_pos := 0
+var _warm_big: Array = []
 
 
-func warm_step(budget_usec: int) -> bool:
+func warm_step(budget_usec: int, max_bytes := 0) -> bool:
 	if not use_fast:
 		return true
 	if _warm_list.is_empty() and _warm_pos == 0:
@@ -384,27 +393,42 @@ func warm_step(budget_usec: int) -> bool:
 			if not f.ends_with(".gd"):
 				continue
 			var n := f.get_basename()
+			if WARM_NEVER.has(n):
+				continue
 			# The battle's own machinery first: controller, text, SOUL, box, buttons, scripts.
 			if n.begins_with("gml_Script_") or n.contains("battlecontroller") or n.contains("writer") or n.contains("obj_heart") or n.contains("border") or n.contains("bt_") or n.contains("hpname"):
 				first.append(n)
 			else:
 				rest.append(n)
 		_warm_list = first + rest
-	if _warm_pos < 0 or _warm_pos >= _warm_list.size():
+	if _warm_pos < 0:
 		return true
 	var t0 := Time.get_ticks_usec()
 	while _warm_pos < _warm_list.size() and Time.get_ticks_usec() - t0 < budget_usec:
 		var n: String = _warm_list[_warm_pos]
 		_warm_pos += 1
-		if not fast_cache.has(n):
-			get_fast(n)
-	return _warm_pos >= _warm_list.size()
+		if fast_cache.has(n):
+			continue
+		if max_bytes > 0:
+			var fa := FileAccess.open(base.path_join("gd/" + n + ".gd"), FileAccess.READ)
+			if fa != null and fa.get_length() > max_bytes:
+				_warm_big.append(n)
+				continue
+		get_fast(n)
+	if _warm_pos < _warm_list.size():
+		return false
+	# The big ones, one per call, only when there is no size limit.
+	if max_bytes == 0 and not _warm_big.is_empty():
+		var b: String = _warm_big.pop_front()
+		if not fast_cache.has(b):
+			get_fast(b)
+	return _warm_big.is_empty()
 
 
 func warm_progress() -> float:
 	if _warm_list.is_empty():
 		return 1.0
-	return float(_warm_pos) / float(_warm_list.size())
+	return float(_warm_pos - _warm_big.size()) / float(_warm_list.size())
 
 
 # First line of every translation; saved translations with another stamp are redone
@@ -773,6 +797,11 @@ func resolve(target, ctx: Dictionary) -> Array:
 			var own = player_insts[ctx_owner].get(n)
 			if own != null:
 				return [] if own.dead else [own]
+		elif follow_owner >= 0 and follow_owner < player_insts.size():
+			# The room's own objects (Toriel walking ahead) look at the player whose story it is.
+			var fo = player_insts[follow_owner].get(n)
+			if fo != null and not fo.dead:
+				return [fo]
 		if private_objs.has(n):
 			var me := ctx_owner if ctx_owner >= 0 else primary_owner
 			var mine: Array = []
@@ -897,6 +926,10 @@ func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, oth
 	# (mp_scenes.gd): its trigger does nothing until then.
 	if type == EV_COLLISION and gate_objs.has(inst.obj) and owners_on and inst.owner < 0 and other is Inst and other.owner >= 0 and event_gate.is_valid():
 		if not event_gate.call(inst, other.owner):
+			return
+	if owners_on and inst.owner < 0 and load_gate_objs.has(inst.obj) and event_gate.is_valid():
+		var lg: Array = load_gate_objs[inst.obj]
+		if type == int(lg[0]) and sub == int(lg[1]) and not event_gate.call(inst, ctx_owner if ctx_owner >= 0 else primary_owner):
 			return
 	var pt := Time.get_ticks_usec() if prof != null else 0
 	if event_watch != null and inst == event_watch:

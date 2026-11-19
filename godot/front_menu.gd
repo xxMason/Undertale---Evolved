@@ -17,9 +17,9 @@ const NAME_MAX := 12
 
 const TITLE_ITEMS := ["Start Game", "Host Game", "Join", "Battle Engine", "Settings", "Quit"]
 const ACTIONS := ["PLAY", "RENAME", "CHEATS", "DELETE"]
-const SETTINGS_ROWS := ["Your name", "Movement", "Smooth motion", "Window size", "Scaling", "Fullscreen", "Battle Engine LV"]
+const SETTINGS_ROWS := ["Your name", "Movement", "Smooth motion", "Window size", "Scaling", "Fullscreen", "Battle Engine LV", "Co-op scaling"]
 # Settings rows 1..6 are the engine's own setup rows (engine.gd _setup_value/_setup_change).
-const SETUP_ROW_OF := {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 0}
+const SETUP_ROW_OF := {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 0, 7: 6}
 const CARDS := 4
 const CARD_H := 66
 

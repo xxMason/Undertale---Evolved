@@ -38,7 +38,7 @@ $traces = @(
 # Stage 4: a friend joins over the network (this PC, port 7791), walks, reads the sign and
 # leaves; the host checks what happened in its game.
 $nh = Join-Path $env:TEMP 'ube_check_net_host.txt'
-$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_net')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '400', '--mphost', '7791', '--mpname', 'Kyle', '--mpcheck', 'net', '--tps', '60') -RedirectStandardOutput $nh -RedirectStandardError "$nh.err" -PassThru -WindowStyle Hidden
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_net')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '900', '--mphost', '7791', '--mpname', 'Kyle', '--mpcheck', 'net', '--tps', '60') -RedirectStandardOutput $nh -RedirectStandardError "$nh.err" -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 3
 $no = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7791 --mpname Greg --frames 240 --tps 60 --press '20:39x7,30:38x25,70:90x2,110:90x2,150:90x2,190:90x2' 2>&1 | ForEach-Object { "$_" }
 if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
@@ -75,6 +75,18 @@ if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
 $kho = @(Get-Content $kh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
 $kok = ("$kho" -match 'MPCHECK kick done, 0 failed') -and ("$ko1" -match 'removed you from the game') -and ("$ko2" -match 'You were removed from this game') -and -not ("$kho $ko1 $ko2" -match 'SCRIPT ERROR')
 Say $kok 'host: remove a friend, change the password' $(if ($kok) { '' } else { (@($kho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($ko1 + $ko2 | Where-Object { $_ -match 'NET ended|ERROR' }) -join '; ') })
+# A friend's PC that misbehaves (pause on and off, a chat flood, a second hello, junk packets)
+# while another plays normally: the host stays up, adds nobody, and lets 5 lines in 4 s through.
+$sh = Join-Path $env:TEMP 'ube_check_spam_host.txt'
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_spam')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '900', '--mphost', '7798', '--mpname', 'Kyle', '--mpcheck', 'spam', '--tps', '60') -RedirectStandardOutput $sh -RedirectStandardError "$sh.err" -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 2
+$evep = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--mpjoin', '127.0.0.1:7798', '--mpname', 'Eve', '--frames', '700', '--tps', '60', '--mpspam', '600') -RedirectStandardOutput "$sh.eve" -RedirectStandardError "$sh.eve.err" -PassThru -WindowStyle Hidden
+$sgo = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7798 --mpname Greg --frames 700 --tps 60 --press '30:39x60,100:40x40,150:37x60,220:38x40,270:39x60,340:40x40,390:37x60,460:38x40' 2>&1 | ForEach-Object { "$_" }
+if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
+if (-not $evep.WaitForExit(20000)) { $evep.Kill() }
+$sho = @(Get-Content $sh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
+$sok = ("$sho" -match 'MPCHECK spam done, 0 failed') -and -not ("$sho $sgo" -match 'SCRIPT ERROR')
+Say $sok 'host: a misbehaving friend' $(if ($sok) { '' } else { (@($sho | Where-Object { $_ -match 'FAIL|ERROR' }) -join '; ') })
 
 if ($Full) {
     foreach ($f in Get-ChildItem (Join-Path $root 'logs\trace') -Filter 'real_g*_s42_lv20_f1500.txt' -ErrorAction SilentlyContinue) {
@@ -136,10 +148,10 @@ Remove-Item -Recurse -Force $cu -ErrorAction SilentlyContinue
 $walkp = (0..40 | ForEach-Object { $a = 80 + $_ * 60; "${a}:39x25,$($a + 30):37x25,$($a + 27):90x2" }) -join ','
 $walkq = (0..40 | ForEach-Object { $a = 80 + $_ * 60; "$($a + 5):38x20,$($a + 35):40x20,$($a + 28):90x2" }) -join ','
 $hostlog = Join-Path $env:TEMP 'ube_check_coop_host.txt'
-$hargs = @('--headless', '--path', "`"$gd`"", '--', '--coophost', '7771', '--as', 'Kyle', '--universesdir', "`"$cu\h`"", '--room', 'room_ruins9', '--set', 'plot=9.2,hp=300', '--press', $walkp, '--coopbot', '--matehp', '1', '--frames', '1600', '--tps', '200', '--cooplog')
+$hargs = @('--headless', '--path', "`"$gd`"", '--', '--coophost', '7771', '--as', 'Kyle', '--universesdir', "`"$cu\h`"", '--room', 'room_ruins9', '--set', 'plot=9.2,hp=300', '--press', $walkp, '--coopbot', '--matehp', '1', '--frames', '2400', '--tps', '200', '--cooplog')
 $hp = Start-Process -FilePath $godot -ArgumentList $hargs -RedirectStandardOutput $hostlog -RedirectStandardError (Join-Path $env:TEMP 'ube_check_coop_host_err.txt') -PassThru -WindowStyle Hidden
 Start-Sleep -Seconds 3
-$co = & $godot --headless --path $gd -- --coopjoin 127.0.0.1:7771 --as Greg --universesdir (Join-Path $cu 'c') --press $walkq --frames 1600 --tps 200 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^COOP client stopped|SCRIPT ERROR' }
+$co = & $godot --headless --path $gd -- --coopjoin 127.0.0.1:7771 --as Greg --universesdir (Join-Path $cu 'c') --press $walkq --frames 2400 --tps 200 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^COOP client stopped|SCRIPT ERROR' }
 $hp.WaitForExit(60000) | Out-Null
 if (-not $hp.HasExited) { Stop-Process -Id $hp.Id -Force }
 $ho = Get-Content $hostlog | Where-Object { $_ -match '^COOP host stopped|SCRIPT ERROR|^CBAT' }
@@ -165,6 +177,17 @@ Say $wok 'worlds: a second room running alongside changes nothing in the game' $
 $osc = ((0..7 | ForEach-Object { "$(10 + 20 * $_):37x8,$(20 + 20 * $_):39x8" }) + (0..83 | ForEach-Object { "$(230 + 8 * $_):90x2" })) -join ','
 $dk = ((0..9 | ForEach-Object { "$(250 + 20 * $_):37x8,$(260 + 20 * $_):39x8" }) + (0..229 | ForEach-Object { "$(460 + 8 * $_):90x2" })) -join ','
 $zz = (@('10:39x23,35:38x20') + (0..62 | ForEach-Object { "$(70 + 10 * $_):90x2" })) -join ','
+# Player 1's random keys for the chaos run (the others' come from --pfeed chaos).
+$crng = [System.Random]::new(5)
+$cparts = @()
+$cf = 20
+while ($cf -lt 3000) {
+    $ck = @(37, 38, 39, 40, 37, 38, 39, 40, 90, 90, 88, 13)[$crng.Next(12)]
+    $cd = if ($ck -le 40) { $crng.Next(2, 30) } else { 2 }
+    $cparts += "${cf}:${ck}x$cd"
+    $cf += $cd + $crng.Next(1, 6)
+}
+$cz = $cparts -join ','
 $wk = (0..7 | ForEach-Object { "$(10 + 20 * $_):37x8,$(20 + 20 * $_):39x8" }) -join ','
 $pz1 = (@($wk) + (0..249 | ForEach-Object { "$(230 + 8 * $_):90x2" })) -join ','
 $pz2 = (0..159 | ForEach-Object { "$(234 + 8 * $_):90x2" }) -join ','
@@ -182,7 +205,7 @@ $mpruns = @(
     # Player 2 (1 HP) is downed alone after player 1 saved, and comes back at the save.
     @('death', @('--room', 'room_ruins7', '--set', 'plot=11,hp=1', '--frames', '2405', '--press', '20:40x8,40:90x2,110:90x2,125:90x2,150:90x2,220:90x2,240:90x2', '--pfeed', "2=$dk")),
     # Toriel's scene in room_ruins19 waits for player 2, who says Yes once free and is brought there.
-    @('gather', @('--room', 'room_ruins19', '--set', 'plot=16', '--frames', '700', '--press', '80:40x100', '--pfeed', "2=$zz")),
+    @('gather', @('--room', 'room_ruins19', '--set', 'plot=16', '--frames', '700', '--press', '70:39x1,75:90x2,80:40x100', '--pfeed', "2=$zz")),
     # Stage 8: player 2 stands by player 1's encounter and is pulled in: one battle, two SOULs, turns in order.
     @('party', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '1600', '--press', $pz1, '--pfeed', "2=$pz2")),
     # Player 2 comes in on 1 HP and goes down; player 1 revives them from MERCY after 3 turns.
@@ -191,9 +214,26 @@ $mpruns = @(
     @('join', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '2400', '--press', $pz1, '--pfeed', "2=$jz2")),
     # Stage 7: player 2 faces player 1, opens the player menu with Enter: Check, Give item, Give gold, Heal.
     @('pmenu', @('--room', 'room_ruins9', '--set', 'plot=9.2,hp=10,gold=20,item.0=1,item.1=1', '--frames', '205', '--pfeed', '2=10:39x8,25:37x1,40:13x2,50:40x2,55:40x2,60:40x2,70:90x2,100:88x2,110:38x2,115:38x2,120:38x2,125:90x2,130:90x2,135:88x2,140:40x2,145:90x2,150:90x2,160:13x2,165:40x2,170:40x2,175:90x2,180:90x2'))
+    # A player who presses nothing on their turn is passed over; ITEM on a teammate ("Who?").
+    @('afk', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '1500', '--press', $wk, '--pfeed', '2=idle')),
+    @('who', @('--room', 'room_ruins9', '--set', 'plot=11,item.0=1', '--frames', '1500', '--press', $wk, '--pfeed', '2=idle')),
+    # Each player has their own Faded Ribbon to pick up.
+    @('pickup', @('--room', 'room_ruins14', '--set', 'plot=11', '--frames', '245', '--press', '10:38x1,20:90x2,40:90x2,60:90x2,80:90x2', '--pfeed', '2=130:38x1,140:90x2,160:90x2,180:90x2,200:90x2')),
+    # Scenes that start as a room loads wait for the party (Toriel at the dummy, in her house).
+    @('loadscene', @('--room', 'room_ruins3', '--set', 'plot=5', '--frames', '90', '--pfeed', '2=60:90x2')),
+    @('loadscene', @('--lsroom', 'room_torhouse1', '--lsobj', 'obj_toroverworld3', '--room', 'room_ruins19', '--set', 'plot=17', '--frames', '90', '--pfeed', '2=60:90x2')),
+    # Undyne's spears: a shield each, spears at each player, each player's keys turn their own.
+    @('spears', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '3000', '--pfeed', '2=idle')),
+    @('spears', @('--spearleft', '--room', 'room_ruins9', '--set', 'plot=11', '--frames', '3000', '--pfeed', '2=380:37x600')),
+    # Four players mash keys at random for 3000 frames: nothing breaks (rooms, HP, characters,
+    # instances, worlds are checked every 30 frames).
+    @('chaos', @('--players', '4', '--room', 'room_ruins9', '--set', 'plot=11', '--frames', '3000', '--press', $cz, '--pfeed', '2=chaos11;3=chaos22;4=chaos33')),
+    # A friend who leaves on their own battle turn really goes, and their place is free again.
+    @('leavelead', @('--players', '3', '--room', 'room_ruins9', '--set', 'plot=11', '--frames', '1500', '--press', $wk, '--pfeed', '2=idle;3=idle'))
 )
 foreach ($r in $mpruns) {
-    $mo = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP "ube_check_mp_$($r[0])") --players 2 --mpcheck $r[0] @($r[1]) 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' }
+    $np = if (@($r[1]) -contains '--players') { @() } else { @('--players', '2') }
+    $mo = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP "ube_check_mp_$($r[0])") @np --mpcheck $r[0] @($r[1]) 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' }
     $mok = ("$mo" -match "MPCHECK $($r[0]) done, 0 failed") -and -not ("$mo" -match 'SCRIPT ERROR')
     Say $mok "players: $($r[0])" $(if ($mok) { '' } else { (@($mo | Where-Object { $_ -match 'FAIL|ERROR' }) -join '; ') })
 }

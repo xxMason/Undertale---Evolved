@@ -9,7 +9,7 @@ extends RefCounted
 
 const FILE := "players.json"
 # A player's own things kept in the save. LV and EXP are everyone's (shared globals).
-const KEYS := ["hp", "maxhp", "at", "df", "wstrength", "adef", "gold", "weapon", "armor", "item"]
+const KEYS := ["hp", "maxhp", "at", "df", "wstrength", "adef", "gold", "weapon", "armor", "item", "mp_pflags"]
 # file0's lines for them (Undertale's scr_save order).
 const LINES := {"maxhp": 2, "at": 4, "wstrength": 5, "df": 6, "adef": 7, "gold": 10, "weapon": 28, "armor": 29}
 
@@ -167,6 +167,9 @@ func read(path: String) -> void:
 	for p in mp.list:
 		if p.index != 0 and p.active and all.has(p.name):
 			apply(p.index, all[p.name])
+		elif p.index == 0 and all.has(p.name) and all[p.name].has("mp_pflags"):
+			# file0 has the flags of whoever saved: the host's own pickups are in players.json.
+			mp.set_value(0, "mp_pflags", all[p.name]["mp_pflags"])
 
 
 # A player joined: their things as last saved in this universe, if they have played here.

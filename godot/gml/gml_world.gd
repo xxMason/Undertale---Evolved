@@ -15,7 +15,7 @@ const VM_FIELDS := ["instances", "by_id", "next_id", "room", "room_width", "room
 	"room_speed", "pending_room", "step_no", "obj_changed_step", "_draw_pass",
 	"scoped", "in_scope", "inst_keys", "aim_split", "aim_skip",
 	# its players (mp_rooms.gd): who is in it, their instances, whose values its objects see
-	"player_insts", "multi_players", "primary_owner", "claimed", "pending_owner", "scene_owner", "party_on"]
+	"player_insts", "multi_players", "primary_owner", "claimed", "pending_owner", "scene_owner", "party_on", "follow_owner"]
 # Per-room fields of gml_builtins.gd.
 const BI_FIELDS := ["keys", "canvas", "relative", "rng", "audio_root", "players", "next_sound_id",
 	"draw_color", "draw_alpha", "draw_font", "halign", "valign",
@@ -56,7 +56,7 @@ static func empty(vm, k: int, seed := 0) -> RefCounted:
 		"room_width": 640, "room_height": 480, "room_speed": 30, "pending_room": -1,
 		"step_no": 0, "obj_changed_step": -1, "_draw_pass": 0,
 		"scoped": null, "in_scope": false, "inst_keys": {}, "aim_split": false, "aim_skip": {},
-		"player_insts": [], "multi_players": [], "primary_owner": 0, "claimed": [], "pending_owner": -1, "scene_owner": -1, "party_on": false}
+		"player_insts": [], "multi_players": [], "primary_owner": 0, "claimed": [], "pending_owner": -1, "scene_owner": -1, "party_on": false, "follow_owner": -1}
 	var rng = Random.new()
 	rng.set_seed(seed)
 	w.bi_state = {"keys": null, "canvas": null, "relative": false, "rng": rng, "audio_root": null,

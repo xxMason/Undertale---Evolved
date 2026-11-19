@@ -47,6 +47,11 @@ const PRIVATE_ROOTS := ["obj_dialoguer", "obj_base_writer", "obj_choicer", "obj_
 const MULTI_OBJECTS := ["obj_overworldcontroller"]
 # obj_time's own variables that hold each player's arrow keys.
 const TIME_FIELDS := ["left", "right", "up", "down"]
+# Item pickups lying in rooms (docs/MULTIPLAYER.md, "Items, menus and saves"): everyone gets
+# their own. Undertale marks one taken with a story flag, so those flags are each player's
+# (kept in their own "mp_pflags", swapped in with their other values), and each player has
+# their own copy of the pickup, which only they see.
+const PICKUPS := {"obj_ribbon_pickup": 100, "obj_knife_pickup": 102}
 # SOUL colours for players 1-4 (chat, name tags): red, blue, green, yellow.
 const COLOURS := [Color(1, 0, 0), Color(0, 0.6, 1), Color(0, 0.85, 0.2), Color(1, 0.9, 0)]
 
@@ -74,6 +79,8 @@ var loaded := 0           # whose values are in the globals right now
 var obj_main := -1
 var obj_time := -1
 var _time_inst = null
+var _pickup_objs := {}     # object index -> its flag
+var _pickup_at := {}       # room index -> {object index: Vector2}: where the room places them
 
 
 func setup(e, names: Array) -> void:
@@ -105,6 +112,11 @@ func setup(e, names: Array) -> void:
 		var nm: String = vm.obj_names[o]
 		if (nm.begins_with("obj_encount_") or nm.begins_with("obj_encounter_") or nm.begins_with("obj_encounterer_")):
 			vm.multi_objs[o] = true
+	for nm in PICKUPS:
+		if vm.obj_index.has(nm):
+			var o := int(vm.obj_index[nm])
+			_pickup_objs[o] = int(PICKUPS[nm])
+			vm.private_objs[o] = true
 	vm.anchored_objs = _anchored()
 	vm.owners_on = list.size() > 1
 
@@ -225,15 +237,18 @@ func add_player(pname: String) -> int:
 # A friend leaves: their character goes, their text boxes close, whatever they were busy
 # with is nobody's again. Their slot keeps their stats for when they come back.
 func remove_player(i: int) -> void:
-	if i < 0 or i >= list.size() or i == primary or not list[i].active:
+	# Player 1 (this PC's) never leaves this way. `primary` is whoever leads the loaded world
+	# (in a battle, whose turn it is), which may well be the player leaving.
+	if i <= 0 or i >= list.size() or not list[i].active:
 		return
 	var p: Player = list[i]
 	var rooms = eng.get("mprooms")
 	var back = rooms.cur if rooms != null else null
 	if rooms != null and rooms.room_of(i) != null:
 		rooms.switch(rooms.room_of(i))
+		rooms.hand_over(i)
 	if loaded == i:
-		switch_to(primary)
+		switch_to(primary if primary != i else -1)
 	p.active = false
 	p.feed = Callable()
 	for inst in vm.instances:
@@ -300,6 +315,8 @@ func _time():
 func _save(i: int) -> void:
 	var p: Player = list[i]
 	var g: Dictionary = vm.globals
+	if not vm.party_on:
+		_flags_to_own(g)
 	for k in g:
 		if not SHARED.has(k):
 			p.overlay[k] = g[k]
@@ -333,6 +350,10 @@ func _load(i: int, full := false) -> void:
 	for k in ov:
 		if not party and not g.has(k) and not SHARED.has(k) and k != "view" and k != "keys" and not String(k).begins_with("time."):
 			g[k] = ov[k]
+	if not party:
+		if not ov.has("mp_pflags"):
+			g["mp_pflags"] = {}     # a new player: nothing picked up yet
+		_own_to_flags(g)
 	var t = _time()
 	if t != null:
 		for f in TIME_FIELDS:
@@ -344,8 +365,87 @@ func _load(i: int, full := false) -> void:
 	eng.bi.keys = p.keys
 
 
+# Where player p can stand beside the spot `at` (a story event they were brought to): a step to
+# one side that isn't in a wall or on another player, else the spot itself.
+func _beside(p: Player, at: Vector2) -> Vector2:
+	var solid := float(vm.obj_index.get("obj_solidparent", -1))
+	var ctx := {"self": p.inst, "other": p.inst, "locals": {}, "args": []}
+	for d in [Vector2(-24, 0), Vector2(24, 0), Vector2(0, 21), Vector2(0, -21), Vector2(-24, 21), Vector2(24, 21), Vector2(-24, -21), Vector2(24, -21)]:
+		var c: Vector2 = at + d
+		if solid >= 0.0 and float(eng.bi._f_place_meeting("place_meeting", [c.x, c.y, solid], ctx)) != 0.0:
+			continue
+		var taken := false
+		for q in list:
+			if q != p and q.inst != null and not q.inst.dead and here(q.index) and Vector2(float(q.inst.v["x"]), float(q.inst.v["y"])).distance_to(c) < 12.0:
+				taken = true
+		if not taken:
+			return c
+	return at
+
+
+# The loaded player's pickup flags, into their own record and back.
+func _flags_to_own(g: Dictionary) -> void:
+	var fl = g.get("flag")
+	if not (fl is Array) or fl.is_empty() or not (fl[0] is Array):
+		return
+	var d := {}
+	for o in _pickup_objs:
+		var f: int = _pickup_objs[o]
+		if f < (fl[0] as Array).size():
+			d[str(f)] = float(fl[0][f])
+	g["mp_pflags"] = d
+
+
+func _own_to_flags(g: Dictionary) -> void:
+	var fl = g.get("flag")
+	var d = g.get("mp_pflags", {})
+	if not (fl is Array) or fl.is_empty() or not (fl[0] is Array) or not (d is Dictionary):
+		return
+	for o in _pickup_objs:
+		var f: int = _pickup_objs[o]
+		if f < (fl[0] as Array).size():
+			fl[0][f] = float(d.get(str(f), 0.0))
+
+
+# Pickups in the loaded world's room: the room's own copy goes, and every player here who
+# hasn't taken it has theirs (made in their context, so its Create and Step see their flag).
+func _pickups() -> void:
+	if _pickup_objs.is_empty() or vm.room < 0:
+		return
+	var at: Dictionary = _pickup_at.get(vm.room, {})
+	var have := {}
+	for i in vm.instances:
+		if i.dead or not _pickup_objs.has(i.obj):
+			continue
+		if i.owner < 0:
+			at[i.obj] = Vector2(float(i.v["x"]), float(i.v["y"]))
+			_pickup_at[vm.room] = at
+			i.dead = true
+			vm.inst_version += 1
+		else:
+			have["%d:%d" % [i.obj, i.owner]] = true
+	if at.is_empty():
+		return
+	var keep: int = vm.ctx_owner
+	for p in list:
+		if not p.active or not here(p.index) or p.inst == null or p.inst.dead:
+			continue
+		for o in at:
+			if have.has("%d:%d" % [o, p.index]):
+				continue
+			var d = value(p.index, "mp_pflags", {})
+			if d is Dictionary and float(d.get(str(_pickup_objs[o]), 0.0)) == 1.0:
+				continue
+			switch_to(p.index)
+			var c = vm.instance_create(at[o].x, at[o].y, o)
+			c.owner = p.index
+	switch_to(keep)
+
+
 # A player's value of a per-player global, wherever it is kept right now.
 func value(i: int, k: String, def = 0.0):
+	if k == "mp_pflags" and i == loaded and not vm.party_on:
+		_flags_to_own(vm.globals)
 	if i == loaded or _in_globals(i, k):
 		return vm.globals.get(k, def)
 	return list[i].overlay.get(k, def)
@@ -354,6 +454,8 @@ func value(i: int, k: String, def = 0.0):
 func set_value(i: int, k: String, val) -> void:
 	if i == loaded or _in_globals(i, k):
 		vm.globals[k] = val
+		if k == "mp_pflags" and not vm.party_on:
+			_own_to_flags(vm.globals)
 	else:
 		list[i].overlay[k] = val
 
@@ -403,6 +505,8 @@ func before_step() -> void:
 			_input(p)
 	if eng.get("mpbattles") != null:
 		eng.mpbattles.before_step()
+	if eng.get("mpscenes") != null:
+		eng.mpscenes.before_step()
 
 
 func _input(p: Player) -> void:
@@ -448,6 +552,7 @@ func after_step() -> void:
 				keep.append(i)
 		vm.claimed = keep
 	bind()
+	_pickups()
 	if eng.get("mpbattles") != null:
 		eng.mpbattles.after_step()
 	if eng.get("mpsaves") != null:
@@ -552,6 +657,8 @@ func bind() -> void:
 					at = Vector2(float(list[primary].inst.v["x"]), float(list[primary].inst.v["y"]))
 			else:
 				at = Vector2(float(p.back[1]), float(p.back[2]))
+				if p.back.size() > 3:
+					at = _beside(p, at)
 			if at != null:
 				# On the 3-pixel grid walking keeps to (obj_mainchara's Create does the same).
 				at = Vector2(roundf(at.x / 3.0) * 3.0, roundf(at.y / 3.0) * 3.0)
@@ -591,6 +698,36 @@ func _room_main():
 # ones driven by SPEC: "idle", "follow" (walk towards player 1), or a list of presses as
 # --press takes them ("frame:key[xframes],...").
 func make_feed(spec: String, me: int) -> Callable:
+	if spec.begins_with("chaos"):
+		# Stress tests: keys mashed at random (seeded): walking, Z, X, C and Enter.
+		var rng := RandomNumberGenerator.new()
+		rng.seed = int(spec.substr(5)) if spec.length() > 5 else me * 7919
+		var st := {"key": 0, "left": 0}
+		return func() -> Array:
+			if int(st["left"]) <= 0:
+				var r := rng.randf()
+				if r < 0.55:
+					st["key"] = [37, 38, 39, 40][rng.randi() % 4]
+					st["left"] = rng.randi_range(4, 45)
+				elif r < 0.8:
+					st["key"] = 90
+					st["left"] = 2
+				elif r < 0.9:
+					st["key"] = 88
+					st["left"] = 2
+				elif r < 0.95:
+					st["key"] = 67
+					st["left"] = 2
+				else:
+					st["key"] = 13
+					st["left"] = 2
+				st["gap"] = rng.randi_range(0, 6)
+			st["left"] = int(st["left"]) - 1
+			if int(st["left"]) < 0 and int(st.get("gap", 0)) > 0:
+				st["gap"] = int(st["gap"]) - 1
+				st["left"] = 0
+				return []
+			return [st["key"]]
 	if spec == "follow":
 		return func() -> Array:
 			var a = list[0].inst

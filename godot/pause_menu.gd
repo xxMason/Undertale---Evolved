@@ -15,7 +15,7 @@ extends RefCounted
 const ITEMS := ["Resume", "Leave", "Exit to desktop", "Settings"]
 const HOST_ITEMS := ["Resume", "Players", "Leave", "Exit to desktop", "Settings"]
 const PW_MAX := 20
-const SETTING_ROWS := [1, 2, 3, 4, 5]      # engine.gd _setup_value / _setup_change rows
+const SETTING_ROWS := [1, 2, 3, 4, 5, 6]   # engine.gd _setup_value / _setup_change rows
 const WHITE := 16777215
 const YELLOW := 65535
 const GREY := 8421504
@@ -283,17 +283,17 @@ func draw() -> void:
 				eng._text(130, 222, text + "_", YELLOW, "fnt_main")
 				eng._text(130, 270, "Empty: no password.  [ENTER] OK  [ESC] Back", GREY, "fnt_maintext")
 		"settings":
-			_box(Rect2(100, 110, 440, 260))
-			eng._text(260, 124, "SETTINGS", WHITE, "fnt_main")
+			_box(Rect2(100, 96, 440, 290))
+			eng._text(260, 110, "SETTINGS", WHITE, "fnt_main")
 			for k in SETTING_ROWS.size():
 				var r: int = SETTING_ROWS[k]
-				var y := 170.0 + k * 34.0
+				var y := 154.0 + k * 34.0
 				var c := YELLOW if k == set_sel else WHITE
 				if k == set_sel:
 					eng._heart(122, y + 6)
 				eng._text(146, y, eng.SETUP_LABELS[r], c, "fnt_maintext")
 				eng._text(330, y, "< " + eng._setup_value(r) + " >", c, "fnt_maintext")
-			eng._text(130, 340, "[LEFT/RIGHT] Change  [X] Back", GREY, "fnt_maintext")
+			eng._text(130, 360, "[LEFT/RIGHT] Change  [X] Back", GREY, "fnt_maintext")
 		"confirm":
 			_box(Rect2(70, 150, 500, 180))
 			var y := 168.0

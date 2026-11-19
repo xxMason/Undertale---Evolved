@@ -359,10 +359,18 @@ player whose camera and values the room's own objects follow) and members.
   (X: go on)"; the others get "Teleport to Story Event?" (Yes / No, `godot/mp_ui.gd`), once they
   are free if they are busy. Yes brings them beside the player who found it; No is reported to
   that player. Then the scene plays, and what that player reads shows on every screen in the
-  room (with its sounds). Not yet: scenes that start as a room loads (Toriel at the training
-  dummy, in her house) only play for whoever is in the room; players brought to a scene stand
-  on the spot of the one who found it.
-- Tests: `--mpcheck battles / save / death / gather`.
+  room (with its sounds). Players brought to a scene stand beside the one who found it (the
+  first free spot next to them, not in a wall or on another player).
+- **Scenes that start as a room loads** (Toriel at the training dummy, in her house:
+  `mp_scenes.gd LOAD_GATE`) wait for the party the same way: the trigger's room-start or
+  Create code is held, then played again as the player who found it once everyone is there.
+  While the scene plays, objects that ask for "the player" (Toriel walking ahead) follow that
+  player (`gml_vm.gd follow_owner`).
+- **Each player's own pickups.** The Faded Ribbon and the Toy Knife (`mp_players.gd PICKUPS`)
+  are there for every player until they take theirs: each sees and picks up their own copy,
+  and the flag that says it was taken is theirs (`mp_pflags`, saved in players.json). The pie
+  stays one for everyone.
+- Tests: `--mpcheck battles / save / death / gather / pickup / loadscene`.
 
 ### Stage 7: player menu, chat, host controls (done 2026-11-19)
 
@@ -386,7 +394,12 @@ player whose camera and values the room's own objects follow) and members.
 - **Host controls**: the host's pause menu has Players: each friend (Remove asks first; a
   removed name can't come back this session, even with the password) and the password
   friends join with (empty: none).
-- Tests: `--mpcheck pmenu` (local), `--mpchat TEXT` on host and friend, `--mpcheck kick`.
+- **A misbehaving friend can't hurt the game**: at most 5 chat lines in 4 seconds from one
+  friend (the rest are dropped); a second hello from someone already playing is ignored; a
+  friend's waiting keys never pile up past 3 seconds; packets that aren't what the host
+  expects are ignored.
+- Tests: `--mpcheck pmenu` (local), `--mpchat TEXT` on host and friend, `--mpcheck kick`,
+  `--mpcheck spam` on the host with `--mpspam N` on a friend.
 
 ### Stage 8: battles (in progress 2026-11-19)
 
@@ -420,7 +433,31 @@ player whose camera and values the room's own objects follow) and members.
 - **Co-op Difficulty Scaling** (setting `multiplayer/difficulty_scaling`, off by default;
   `--mpscale` in tests): enemy HP +50% for each player past the first, raised again as players
   join.
+  The setting is in Settings (title screen and pause menu): "Co-op scaling".
+- **Away.** A player who presses nothing for 20 seconds on their turn is passed over: "Greg is
+  away: Ann's turn." on everyone's screen.
+- **ITEM on a teammate.** With others up in the battle, Z on an item asks "Who?": yourself
+  first, then the others. The item is used as it is in the game, and the HP goes to the one
+  picked ("Kyle gave you an item: +10 HP.").
+- **Undyne's spears.** Every player up has their own green SOUL and shield, turned by their
+  own keys; each spear goes at one of them (in turn), and a spear that isn't blocked hurts
+  only that player. The shield of the player whose turn it is ends the attack, as in the game.
+- **Leaving.** A friend who leaves (or whose PC stops) during their own turn really goes: the
+  turn passes to the next player, and their place in the game is free for someone new.
 - A persistent room everyone had left gets a character again where it places its player.
-- Not yet: Undyne's per-player spears (Waterfall); ITEM on a teammate ("Who?" from 0.4); a turn
-  timer for a player who doesn't act; a toggle for scaling in the menus.
-- Tests: `--mpcheck party / revive / join`.
+- Tests: `--mpcheck party / revive / join / afk / who / spears / leavelead`.
+
+### Stress tests (2026-11-19)
+
+- `--mpcheck chaos` with `--pfeed "2=chaos11;3=chaos22"` (each player mashes random keys):
+  every 30 frames it checks that each player is in a world and in the room, HP is sane, one
+  character each, nobody who left is still in a world, and instance and world counts stay
+  bounded; it measures each frame. `--warm` compiles all the game's code first.
+- Four players, 9000 frames: no errors, about 8 ms a frame. A host and three friends over the
+  network, 6000 frames: no errors, no late frames on any friend, 12-15 KB a frame before
+  compression (1-1.4 KB on the wire). Eight friends joining and leaving (half of them killed
+  mid-game) and one spamming: no errors.
+- Found and fixed: the background compile took a whole script at a time, and a few scripts
+  take long (the end credits' 1.3 s), so the game froze about a second after it started.
+  While playing, scripts over 150 KB are left for the menus (the title screen now compiles in
+  the background too) or for when they are first used; the credits' is never compiled early.

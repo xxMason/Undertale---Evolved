@@ -366,6 +366,9 @@ func _ready() -> void:
 		var mpp := args.find("--mppause")
 		if mpp >= 0 and mpp + 1 < args.size():
 			_mp_pause_test(args[mpp + 1])
+		var mps := args.find("--mpspam")
+		if mps >= 0 and mps + 1 < args.size():
+			_mp_spam_test(int(args[mps + 1]))
 	elif i >= 0 and i + 1 < args.size():
 		var why: String = coop.start_host(int(args[i + 1]))
 		if why != "":
@@ -565,6 +568,53 @@ func _mp_pause_test(spec: String) -> void:
 		await get_tree().physics_frame
 	pause.close()
 	print("NET resumed")
+
+
+# --mpspam N (a friend's PC, testing): for N frames, misbehaves as much as it can: opens and
+# closes the pause menu, floods the chat (long lines, odd characters), says hello again, and
+# sends the host packets that aren't what it expects. The host must stay up and fair.
+func _mp_spam_test(n: int) -> void:
+	while mpnet == null or mpnet.state != "playing":
+		await get_tree().physics_frame
+	var r := RandomNumberGenerator.new()
+	r.seed = 99
+	var junk: Array = [
+		{"t": "hello", "proto": MpNet.PROTOCOL, "v": coop._my_version(), "mods": coop.mods_id(), "name": "Again", "pw": ""},
+		{"t": "chat", "text": {"not": "text"}},
+		{"t": "chat", "text": 12345},
+		{"t": "pause", "on": [1, 2]},
+		{"t": {"x": 1}},
+		{"t": "hello", "proto": {"a": 1}, "name": [1], "pw": {}},
+		{"t": "nonsense"},
+		{},
+	]
+	var sent := 0
+	for k in n:
+		await get_tree().physics_frame
+		if mpnet.link == null or mpnet.state != "playing":
+			break
+		match r.randi_range(0, 5):
+			0:
+				pause.toggle()
+			1:
+				mpnet.chat("spam %d %s" % [k, "äöü ✓ 漢字 " + "x".repeat(r.randi_range(0, 200))])
+				sent += 1
+			2:
+				mpnet.link.send(0, var_to_bytes(junk[r.randi_range(0, junk.size() - 1)]), ENetPacketPeer.FLAG_RELIABLE)
+			3:
+				var bytes := PackedByteArray()
+				for b in r.randi_range(0, 300):
+					bytes.append(r.randi_range(0, 255))
+				mpnet.link.send(r.randi_range(0, 1), bytes, ENetPacketPeer.FLAG_RELIABLE)
+			4:
+				var keys: Array = [r.randi_range(-5, 99999999)]
+				for f in r.randi_range(0, 400):
+					keys.append([r.randi_range(0, 300), {"k": 1}, "str", 1.5e30] if f % 7 == 0 else [37 + f % 4])
+				mpnet.link.send(1, var_to_bytes(keys), ENetPacketPeer.FLAG_RELIABLE)
+			5:
+				mpnet.link.send(1, var_to_bytes([{"bad": 1}, [37]]), ENetPacketPeer.FLAG_RELIABLE)
+	pause.close()
+	print("NET spam done: %d chat lines tried" % sent)
 
 
 # This PC's keys are the pause menu's or the chat's, not the game's.
@@ -2228,13 +2278,15 @@ func _process(_delta: float) -> void:
 		_hitch_t = now
 		_hitch_logic = perf_logic_us
 		_hitch_draw = perf_draw_us
-	# Compile the game's translated code in the background while the menus are idle.
-	if vm != null and (screen == Screen.LIST or screen == Screen.RESULT):
+	# Compile the game's translated code in the background while the menus (title screen included) are idle.
+	# Not while joining someone (a long compile would hold up the connection).
+	var linking: bool = (coop != null and coop.active()) or (mpnet != null and mpnet.active())
+	if vm != null and (screen == Screen.LIST or screen == Screen.RESULT or (screen == Screen.FRONT and not linking)):
 		vm.warm_step(6000)
 	elif vm != null and screen == Screen.GAME and not net_client and last_logic_us < 12000:
 		# While playing, a little at a time between frames, so the first text box or battle
 		# doesn't stop the game for a moment while its code is compiled.
-		vm.warm_step(2500)
+		vm.warm_step(2500, 150000)
 	if menushot != "" and (screen == Screen.LIST or screen == Screen.FRONT):
 		_menushot_wait += 1
 		# The title screen and Join wait 3 s, so games on the network have been heard.
@@ -2431,7 +2483,7 @@ func _draw_list() -> void:
 const SETUP_RECT := Rect2(150, 96, 370, 300)
 const SETUP_ROW_H := 30
 const SETUP_ROWS := 6
-const SETUP_LABELS := ["LV", "Movement", "Smooth motion", "Window size", "Scaling", "Fullscreen"]
+const SETUP_LABELS := ["LV", "Movement", "Smooth motion", "Window size", "Scaling", "Fullscreen", "Co-op scaling"]
 
 
 func _setup_value(r: int) -> String:
@@ -2448,6 +2500,8 @@ func _setup_value(r: int) -> String:
 			return "PIXEL-PERFECT" if pixel_perfect else "FILL"
 		5:
 			return "ON" if fullscreen else "OFF"
+		6:
+			return "ON" if bool(settings.get("multiplayer/difficulty_scaling", false)) else "OFF"
 	return ""
 
 
@@ -2473,6 +2527,9 @@ func _setup_change(r: int, d: int) -> void:
 		5:
 			fullscreen = not fullscreen
 			_apply_display(true)
+		6:
+			# Co-op Difficulty Scaling: more enemy HP for each player past the first (mp_battles.gd).
+			settings["multiplayer/difficulty_scaling"] = not bool(settings.get("multiplayer/difficulty_scaling", false))
 	_save_settings()
 
 

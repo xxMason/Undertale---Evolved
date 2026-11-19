@@ -271,18 +271,20 @@ func _refuse(peer: ENetPacketPeer, reason: String) -> void:
 
 
 func _host_msg(peer: ENetPacketPeer, m: Dictionary) -> void:
-	match String(m.get("t", "")):
+	match str(m.get("t", "")):
 		"hello":
-			if int(m.get("proto", 0)) != PROTOCOL or String(m.get("v", "")) != eng.coop._my_version():
+			if int(peers[peer]["index"]) >= 0:
+				return      # already playing: a second hello is ignored
+			if not (m.get("proto") is int) or int(m["proto"]) != PROTOCOL or str(m.get("v", "")) != eng.coop._my_version():
 				_refuse(peer, "Different versions: the host has %s, you have %s. Run update.bat." % [eng.coop._my_version(), m.get("v", "?")])
 				return
-			if m.get("mods", []) != eng.coop.mods_id():
+			if typeof(m.get("mods", [])) != typeof(eng.coop.mods_id()) or m.get("mods", []) != eng.coop.mods_id():
 				_refuse(peer, "Different mods: everyone needs the same ones as the host.")
 				return
-			if password != "" and String(m.get("pw", "")) != password:
+			if password != "" and str(m.get("pw", "")) != password:
 				_refuse(peer, "Wrong password.")
 				return
-			var nm := String(m.get("name", "")).strip_edges().left(12)
+			var nm := str(m.get("name", "")).strip_edges().left(12)
 			if nm == "":
 				nm = "Friend"
 			if kicked.has(nm.to_lower()):
@@ -306,11 +308,29 @@ func _host_msg(peer: ENetPacketPeer, m: Dictionary) -> void:
 		"pause":
 			var i := int(peers[peer]["index"])
 			if i >= 0 and i < eng.mp.list.size():
-				eng.mp.list[i].paused = bool(m.get("on", false))
+				eng.mp.list[i].paused = m.get("on") is bool and bool(m["on"])
 		"chat":
 			var i := int(peers[peer]["index"])
-			if i >= 0:
-				_chat_from(i, String(m.get("text", "")))
+			if i >= 0 and m.get("text") is String and _chat_allowed(peers[peer]):
+				_chat_from(i, String(m["text"]))
+
+
+# At most CHAT_BURST lines in CHAT_WINDOW_MS from one friend; the rest are dropped, so
+# nobody can flood everyone's screen (or the network) with lines.
+const CHAT_BURST := 5
+const CHAT_WINDOW_MS := 4000
+
+
+func _chat_allowed(p: Dictionary) -> bool:
+	var now := Time.get_ticks_msec()
+	var times: Array = p.get("chat_at", [])
+	while not times.is_empty() and now - int(times[0]) > CHAT_WINDOW_MS:
+		times.pop_front()
+	if times.size() >= CHAT_BURST:
+		return false
+	times.append(now)
+	p["chat_at"] = times
+	return true
 
 
 func _host_lost(peer: ENetPacketPeer) -> void:
@@ -329,6 +349,8 @@ func _host_keys(peer: ENetPacketPeer, data: PackedByteArray) -> void:
 	var a = bytes_to_var(data)
 	if not (a is Array) or a.size() < 2:
 		return
+	if not (a[0] is int or a[0] is float):
+		return
 	var p: Dictionary = peers[peer]
 	var first := int(a[0])
 	var last_seen := int(p.get("kf", -1))
@@ -338,16 +360,24 @@ func _host_keys(peer: ENetPacketPeer, data: PackedByteArray) -> void:
 			p["keys"].append([f, _allowed(a[k])])
 			last_seen = f
 	p["kf"] = last_seen
+	# A friend far behind (or sending too much) never builds up more than a few seconds.
+	if (p["keys"] as Array).size() > KEYS_KEPT:
+		p["keys"] = (p["keys"] as Array).slice(-KEYS_KEPT)
 	while p["keys"].size() > KEY_QUEUE:
 		p["keys"].pop_front()
 
 
 # Keys a friend's PC may give the game: not Esc (held, Undertale ends the game, the host's and
 # everyone's; a friend leaves with it on their own PC) nor the F keys (fullscreen, debug).
+const KEYS_KEPT := 90      # frames of a friend's keys waiting at most (3 s)
+
+
 func _allowed(held) -> Array:
 	var out: Array = []
 	if held is Array:
 		for c in held:
+			if out.size() >= 16 or not (c is int or c is float):
+				break
 			var k := int(c)
 			if k != 27 and (k < 112 or k > 123):
 				out.append(k)

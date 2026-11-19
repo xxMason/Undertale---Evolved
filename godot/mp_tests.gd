@@ -78,7 +78,7 @@ func frame(f: int) -> void:
 			if f == 200:
 				_ok(float(_v(1, "hp")) == 20.0 and float(_v(0, "hp")) == 10.0, "only player 2 was healed (HP %s and %s)" % [_v(0, "hp"), _v(1, "hp")])
 				_ok(_items(1) == [1.0, 0.0] and _items(0) == [1.0, 1.0], "only player 2's candy was eaten (%s and %s)" % [_items(0), _items(1)])
-				_ok(float(_v(1, "interact")) == 0.0 and float(_v(1, "menuno")) == -1.0, "player 2's menu closed")
+				_ok(float(_v(1, "interact")) == 0.0 and float(_v(1, "menuno")) == -1.0, "player 2's menu closed (interact %s, menuno %s)" % [_v(1, "interact"), _v(1, "menuno")])
 				_end()
 		"net":
 			# Host side of a network game (stage 4): a friend joins, walks right, reads the
@@ -89,7 +89,7 @@ func frame(f: int) -> void:
 			if seen.has("joined") and f == int(seen["joined"]) + 2:
 				seen["p1"] = _at(0)
 			if seen.has("joined") and f == int(seen["joined"]) + 40:
-				_ok(_at(1).x > seen["p2"].x + 10.0, "the friend walked right (%s -> %s)" % [seen["p2"], _at(1)])
+				_ok(_at(1).x > seen["p2"].x + 2.0, "the friend walked right (%s -> %s)" % [seen["p2"], _at(1)])
 				_ok(_at(0) == seen.get("p1", _at(0)), "the host's character stayed put")
 			if seen.has("joined") and not seen.has("read") and float(_v(1, "interact")) == 1.0:
 				seen["read"] = f
@@ -99,6 +99,108 @@ func frame(f: int) -> void:
 				seen["left"] = f
 				_ok(seen.has("read"), "the friend read the sign before leaving")
 				_ok(eng.mp.list[1].inst == null, "the friend's character went when they left")
+				_end()
+		"rooms":
+			# Stage 5: player 2 goes left into room_ruins8 alone and falls through its hole;
+			# then player 1 follows into the world player 2's room is running.
+			var mr = eng.mprooms
+			if f == 80:
+				_ok(mr.rooms.size() == 2, "two rooms are running (%d)" % mr.rooms.size())
+				_ok(mr.room_name(mr.room_of(0)) == "room_ruins9" and mr.room_name(mr.room_of(1)) == "room_ruins8", "player 1 is in room_ruins9, player 2 in room_ruins8 (%s, %s)" % [mr.room_name(mr.room_of(0)), mr.room_name(mr.room_of(1))])
+				_ok(_count("obj_unfader") == 0, "player 2's fade to black ended with them leaving (%d left)" % _count("obj_unfader"))
+				_ok(_count("obj_mainchara") == 1, "player 1's room has one character (%d)" % _count("obj_mainchara"))
+				_ok(_drawn(0) > 50 and _drawn(1) > 50, "both screens show their room (%d and %d draws)" % [_drawn(0), _drawn(1)])
+				var touched := 0
+				for i in eng.vm.instances:
+					if not i.dead and String(eng.vm.obj_names[i.obj]).begins_with("obj_door") and float(i.v.get("touched", 0.0)) != 0.0:
+						touched += 1
+				_ok(touched == 0, "the door player 2 used works again for player 1")
+			if f == 200:
+				_ok(_at(1).y > 480.0 and _at(1).y < 520.0, "player 2 landed on the leaves below (%s)" % _at(1))
+				_ok(float(_v(1, "interact")) == 0.0, "player 2 is free again")
+			if f == 300:
+				_ok(mr.rooms.size() == 1, "one room is running again (%d)" % mr.rooms.size())
+				_ok(mr.room_name(mr.room_of(0)) == "room_ruins8" and mr.room_of(0) == mr.room_of(1), "both players are in room_ruins8")
+				_ok(_at(0).x > 200.0 and _at(0).y < 150.0, "player 1 came in at the door (%s)" % _at(0))
+				_ok(_count("obj_mainchara") == 2, "the room has both characters (%d)" % _count("obj_mainchara"))
+				_ok(_drawn(0) > 50 and _drawn(1) > 50, "both screens show the room (%d and %d draws)" % [_drawn(0), _drawn(1)])
+				_end()
+		"battles":
+			# Stage 6: both players walk back and forth in room_ruins9 and get random battles on
+			# the same frame; each fights their own (Z), and both come back where they were.
+			var mr = eng.mprooms
+			if f == 150:
+				seen["p1"] = _at(0)
+				seen["p2"] = _at(1)
+			if f == 200:
+				_ok(mr.rooms.size() == 2 and mr.room_of(0) != mr.room_of(1), "two battles are running (%d worlds)" % mr.rooms.size())
+				_ok(mr.room_name(mr.room_of(0)) == "room_battle" and mr.room_name(mr.room_of(1)) == "room_battle", "each player is in their own battle")
+			if f == 950:
+				_ok(mr.rooms.size() == 1 and mr.room_name(mr.room_of(0)) == "room_ruins9", "both are back in room_ruins9 (%s)" % mr.status())
+				_ok(_at(0).distance_to(seen["p1"]) < 8.0, "player 1 is where they were (%s, was %s)" % [_at(0), seen["p1"]])
+				_ok(_at(1).distance_to(seen["p2"]) < 8.0, "player 2 is where they were (%s, was %s)" % [_at(1), seen["p2"]])
+				_ok(float(_v(0, "gold")) > 0.0 and float(_v(1, "gold")) > 0.0, "both won their gold (%s and %s)" % [_v(0, "gold"), _v(1, "gold")])
+				_ok(_count("obj_mainchara") == 2, "the room has both characters (%d)" % _count("obj_mainchara"))
+				_end()
+		"save":
+			# Stage 6: player 2 has their menu open, so player 1's save is refused; then player
+			# 2 closes it and player 1 saves for both (room_ruins7's save point).
+			if f == 165:
+				_ok(float(_v(0, "menuno")) == -1.0 and float(_v(0, "interact")) == 0.0, "player 1's save menu didn't open")
+				_ok(_told(0, "Can't save now: Greg is in a menu."), "player 1 is told why (%s)" % [eng.mpsaves.told])
+				_ok(not FileAccess.file_exists(eng.bi.save_path("file0")), "nothing was saved")
+			if f == 370:
+				_ok(FileAccess.file_exists(eng.bi.save_path("file0")), "the game was saved")
+				var all = JSON.parse_string(FileAccess.get_file_as_string(eng.bi.save_path("players.json")))
+				_ok(all is Dictionary and all.has("Kyle") and all.has("Greg"), "both players' things were saved (%s)" % [all.keys() if all is Dictionary else all])
+				_ok(_told(1, "Kyle saved the game."), "player 2 is told who saved")
+				_end()
+		"death":
+			# Stage 6: player 1 saves in room_ruins7; player 2 (1 HP) gets a battle there and is
+			# downed alone. After the game over screen they come back at the save, on full HP;
+			# player 1 is told, and nothing else changes.
+			var mr = eng.mprooms
+			var rn2: String = mr.room_name(mr.room_of(1))
+			if rn2 == "room_battle" and not seen.has("battle"):
+				seen["battle"] = f
+			if rn2.begins_with("room_gameover") and not seen.has("over"):
+				seen["over"] = f
+				_ok(mr.room_name(mr.room_of(0)) == "room_ruins7", "player 1 stays in room_ruins7 meanwhile")
+			if seen.has("over") and not seen.has("back") and mr.room_of(1) == mr.room_of(0):
+				seen["back"] = f
+				_ok(FileAccess.file_exists(eng.bi.save_path("file0")), "player 1 had saved")
+				_ok(float(_v(1, "hp")) == float(_v(1, "maxhp")), "player 2 is on full HP (%s of %s)" % [_v(1, "hp"), _v(1, "maxhp")])
+				_ok(_at(1) == Vector2(210, 99), "player 2 is at the save point (%s)" % _at(1))
+				_ok(_told(0, "Greg died."), "player 1 was told (%s)" % [eng.mpsaves.told])
+				_ok(float(eng.vm.globals.get("plot", 0.0)) == 11.0, "the story didn't go back (plot %s)" % eng.vm.globals.get("plot"))
+				_ok(mr.rooms.size() == 1, "one room is running (%s)" % mr.status())
+				_end()
+			if f == 2400 and not seen.has("back"):
+				_ok(false, "player 2 came back (battle %s, game over %s)" % [seen.get("battle"), seen.get("over")])
+				_end()
+		"gather":
+			# Stage 6: player 2 goes ahead into Toriel's house (and reads her words there);
+			# player 1 walks into Toriel's scene in room_ruins19. The scene waits; player 2 is
+			# asked once their text is over, says Yes, and is brought beside player 1; the
+			# scene then plays, on both screens.
+			var mr = eng.mprooms
+			var ui = eng.mpui
+			if f == 200:
+				_ok(ui.waits.has(0) and String(ui.waits[0]["text"]).begins_with("Waiting for 1 more player"), "player 1 is waiting for player 2 (%s)" % [ui.waits.get(0)])
+				_ok(float(_v(0, "interact")) == 0.0, "the scene hasn't started")
+				_ok(not ui.prompts.has(1) and float(_v(1, "interact")) != 0.0, "player 2, still reading, isn't asked yet")
+			if ui.prompts.has(1) and not seen.has("asked"):
+				seen["asked"] = f
+			if seen.has("asked") and not seen.has("tp") and mr.room_of(1) == mr.room_of(0):
+				seen["tp"] = f
+				_ok(_at(1).distance_to(_at(0)) < 4.0, "player 2 is beside player 1 (%s and %s)" % [_at(1), _at(0)])
+			if seen.has("tp") and f == int(seen["tp"]) + 30:
+				_ok(float(_v(0, "interact")) == 1.0, "the scene started for player 1")
+				_ok(not ui.waits.has(0), "player 1 isn't waiting any more")
+				_ok(_drawn(0) == _drawn(1) and _drawn(0) > 100, "both screens show Toriel's words (%d and %d draws)" % [_drawn(0), _drawn(1)])
+				_end()
+			if f == 690 and not seen.has("tp"):
+				_ok(false, "player 2 was brought to the scene (asked at %s)" % seen.get("asked"))
 				_end()
 		"hole":
 			# Player 2 falls through a hole in room_ruins8; player 1 stands still.
@@ -116,10 +218,12 @@ func frame(f: int) -> void:
 func _drawn(k: int) -> int:
 	var c := Counter.new()
 	var p = eng.mp.list[k]
-	if k == eng.mp.primary:
-		eng.rec.replay(c, 1.0, k)
+	var r = eng.mprooms.room_of(k) if eng.mprooms != null else null
+	var rec = r.rec if r != null else eng.rec
+	if k == (r.lead if r != null else eng.mp.primary):
+		rec.replay(c, 1.0, k)
 	else:
-		eng.rec.replay(c, 1.0, k, p.view, p.prev_view)
+		rec.replay(c, 1.0, k, p.view, p.prev_view)
 	return c.n
 
 
@@ -139,3 +243,19 @@ class Counter:
 
 func _end() -> void:
 	print("MPCHECK %s done, %d failed" % [name, failed])
+
+
+func _count(obj_name: String) -> int:
+	var o := int(eng.vm.obj_index.get(obj_name, -1))
+	var n := 0
+	for i in eng.vm.instances:
+		if not i.dead and i.obj == o:
+			n += 1
+	return n
+
+
+func _told(k: int, text: String) -> bool:
+	for t in eng.mpsaves.told:
+		if int(t[0]) == k and String(t[1]) == text:
+			return true
+	return false

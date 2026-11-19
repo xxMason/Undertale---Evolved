@@ -12,19 +12,28 @@ extends RefCounted
 const Keys = preload("res://gml/gml_keys.gd")
 
 const MAX := 4
-# Globals that belong to each player. Data, not code: mods can add their own.
-const PER_PLAYER := [
-	# input (obj_time computes these for the primary player; see _input)
-	"control_state", "control_pressed", "control_new_state",
-	# where they are and what they are doing
-	"facing", "interact", "phasing", "entrance", "encounter", "currentroom",
-	"menuno", "menucoord", "menuchoice",
-	# their character
-	"hp", "maxhp", "at", "df", "weapon", "armor", "wstrength", "adef", "gold",
-	"item", "itemname", "phone", "phonename",
-	# their text box
-	"msg", "msc", "typer", "choice", "choices", "facechoice", "faceemotion", "facechange",
-]
+# Every global is each player's own (their input, HP, items, gold, text, menus, battle...)
+# except these, which are the world's: story progress (plot, flags, kills, shared EXP and LV),
+# the save file's bookkeeping, and the game's settings. Data, not code: mods can add their own.
+const SHARED := {
+	"plot": true, "flag": true, "fplot": true, "kills": true, "xp": true, "lv": true,
+	"charname": true, "filechoice": true, "lastsavedkills": true, "lastsavedlv": true,
+	"lastsavedtime": true, "hardmode": true, "osflavor": true,
+	"language": true, "locale": true, "debug": true, "awfultest": true, "starton9": true,
+	"analog_sense": true, "analog_sense_sense": true, "default_analog_sense": true,
+	"default_analog_sense_sense": true, "button0": true, "button1": true, "button2": true,
+	"default_button0": true, "default_button1": true, "default_button2": true,
+	"default_joy_dir": true, "joy_dir": true, "joypad_dir": true, "to_joyconfig": true,
+	"disable_os_pause": true, "current_ini": true, "savedata": true, "savedata_async_id": true,
+	"savedata_async_load": true, "savedata_buffer": true, "savedata_debuginfo": true,
+	"savedata_error": true, "screen_border_activate_on_game_over": true,
+	"screen_border_active": true, "screen_border_alpha": true,
+	"screen_border_dynamic_fade_id": true, "screen_border_dynamic_fade_level": true,
+	"screen_border_id": true, "screen_border_state": true, "kanatype_lookup_2ch": true,
+	"kanatype_lookup_3ch": true, "kanatype_lookup_4ch": true, "text_data_en": true,
+	"text_data_ja": true, "trophy_init_complete": true, "steam_int": true,
+	"window_scale": true, "window_xofs": true, "window_yofs": true,
+}
 # Text boxes and faces: each player sees only their own (and the world's).
 const PRIVATE_ROOTS := ["obj_dialoguer", "obj_base_writer", "obj_choicer", "obj_face"]
 # Objects that run once per player with their own variables: the overworld menu.
@@ -40,11 +49,13 @@ class Player:
 	var name := ""
 	var keys                     # gml_keys.gd: what this player holds this frame
 	var feed := Callable()       # returns this frame's held key codes (bots, network)
-	var overlay := {}            # their PER_PLAYER globals while someone else's are loaded
+	var overlay := {}            # their own globals while someone else's are loaded (and their view, keys)
 	var inst = null              # their obj_mainchara in the current room
 	var view := Vector2.ZERO     # their camera (view 0's position) this logic frame
 	var prev_view := Vector2.ZERO
 	var active := true           # false: left the game; their slot (and stats) wait for them
+	var back = null              # [room, x, y]: where they were before a battle; [room, "save"]: by its save point (mp_rooms.gd)
+	var respawn := false         # downed alone: comes back at the last save after the game over screen
 
 
 var eng
@@ -80,6 +91,12 @@ func setup(e, names: Array) -> void:
 	vm.multi_players = range(list.size())
 	vm.private_objs = _family(PRIVATE_ROOTS, "obj_face_")
 	vm.multi_objs = _family(MULTI_OBJECTS, "")
+	# Random encounters: each room's encounter object counts each player's own steps
+	# (global.encounter) and starts their own battle.
+	for o in vm.obj_names.size():
+		var nm: String = vm.obj_names[o]
+		if (nm.begins_with("obj_encount_") or nm.begins_with("obj_encounter_") or nm.begins_with("obj_encounterer_")):
+			vm.multi_objs[o] = true
 	vm.anchored_objs = _anchored()
 	vm.owners_on = list.size() > 1
 
@@ -125,6 +142,29 @@ func count() -> int:
 	return list.size()
 
 
+# With players in several rooms (mp_rooms.gd): the players in the world the machine has
+# loaded now. Empty: everyone.
+var members: Array = []
+
+
+func here(i: int) -> bool:
+	return members.is_empty() or members.has(i)
+
+
+# Before the machine changes world: the lead's values are loaded and everyone's saved, so the
+# world keeps its own camera and keys and nobody takes this world's camera along.
+func park() -> void:
+	switch_to(-1)
+	_save(loaded)
+
+
+# After: the new world's lead is loaded (their values, camera and keys).
+func unpark() -> void:
+	_load(primary)
+	loaded = primary
+	vm.ctx_owner = -1
+
+
 func active_count() -> int:
 	var n := 0
 	for p in list:
@@ -166,6 +206,10 @@ func add_player(pname: String) -> int:
 	slot.active = true
 	slot.feed = Callable()
 	_refresh()
+	if eng.get("mprooms") != null:
+		eng.mprooms.joined(slot.index)
+	if eng.get("mpsaves") != null:
+		eng.mpsaves.joined(slot.index)
 	bind()
 	return slot.index
 
@@ -176,6 +220,10 @@ func remove_player(i: int) -> void:
 	if i < 0 or i >= list.size() or i == primary or not list[i].active:
 		return
 	var p: Player = list[i]
+	var rooms = eng.get("mprooms")
+	var back = rooms.cur if rooms != null else null
+	if rooms != null and rooms.room_of(i) != null:
+		rooms.switch(rooms.room_of(i))
 	if loaded == i:
 		switch_to(primary)
 	p.active = false
@@ -191,12 +239,16 @@ func remove_player(i: int) -> void:
 	vm.player_insts[i] = {}
 	p.inst = null
 	_refresh()
+	if rooms != null:
+		rooms.left(i)
+		if rooms.rooms.has(back):
+			rooms.switch(back)
 
 
 func _snapshot() -> Dictionary:
 	var out := {}
-	for k in PER_PLAYER:
-		if vm.globals.has(k):
+	for k in vm.globals:
+		if not SHARED.has(k):
 			out[k] = vm.globals[k].duplicate(true) if vm.globals[k] is Array else vm.globals[k]
 	return out
 
@@ -204,7 +256,7 @@ func _snapshot() -> Dictionary:
 func _refresh() -> void:
 	var on: Array = []
 	for p in list:
-		if p.active:
+		if p.active and here(p.index):
 			on.append(p.index)
 	vm.multi_players = on
 	vm.owners_on = list.size() > 1
@@ -240,8 +292,8 @@ func _time():
 func _save(i: int) -> void:
 	var p: Player = list[i]
 	var g: Dictionary = vm.globals
-	for k in PER_PLAYER:
-		if g.has(k):
+	for k in g:
+		if not SHARED.has(k):
 			p.overlay[k] = g[k]
 	var t = _time()
 	if t != null:
@@ -255,13 +307,21 @@ func _load(i: int) -> void:
 	var p: Player = list[i]
 	var g: Dictionary = vm.globals
 	var ov: Dictionary = p.overlay
-	for k in PER_PLAYER:
+	for k in g:
+		if SHARED.has(k):
+			continue
 		if ov.has(k):
 			g[k] = ov[k]
-		elif g.has(k):
+		else:
 			# First time this player needs it: their own copy of the current value (an array
 			# must never be shared, or one player's items would change the other's).
-			g[k] = g[k].duplicate(true) if g[k] is Array else g[k]
+			var cur = g[k]
+			if cur is Array:
+				g[k] = cur.duplicate(true)
+	# Globals only they have made so far.
+	for k in ov:
+		if not g.has(k) and not SHARED.has(k) and k != "view" and k != "keys" and not String(k).begins_with("time."):
+			g[k] = ov[k]
 	var t = _time()
 	if t != null:
 		for f in TIME_FIELDS:
@@ -294,10 +354,17 @@ func set_value(i: int, k: String, val) -> void:
 # control_update and arrow keys: held, and not just released).
 func before_step() -> void:
 	for p in list:
-		if p.index == primary or not p.active:
+		if not p.active or not here(p.index):
 			continue
-		p.keys.poll(p.feed.call() if p.feed.is_valid() else [])
-		_input(p)
+		# Player 1's keys are this PC's, already read by the engine.
+		if p.index != 0:
+			p.keys.poll(p.feed.call() if p.feed.is_valid() else [])
+		# A prompt of the engine's own (mp_ui.gd) takes their keys first.
+		if eng.get("mpui") != null:
+			eng.mpui.filter(p)
+		# The lead's are worked out by the room's own obj_time.
+		if p.index != primary:
+			_input(p)
 
 
 func _input(p: Player) -> void:
@@ -343,17 +410,21 @@ func after_step() -> void:
 				keep.append(i)
 		vm.claimed = keep
 	bind()
+	if eng.get("mpsaves") != null:
+		eng.mpsaves.after_step()
 	# Each player's camera follows their own character the way the room's view does for
 	# player 1 (borders, speed, kept inside the room): the room's view object means their
 	# own instance in their context.
 	var keep_ctx: int = vm.ctx_owner
 	for p in list:
-		if p.index == primary or not p.active:
+		if p.index == primary or not p.active or not here(p.index):
 			continue
 		switch_to(p.index)
 		eng.bi.update_views()
 	switch_to(keep_ctx)
 	for p in list:
+		if not here(p.index):
+			continue
 		p.prev_view = p.view
 		p.view = value(p.index, "view", Vector2.ZERO) if p.index != loaded else Vector2(float(eng.bi.view_xview[0]), float(eng.bi.view_yview[0]))
 
@@ -380,12 +451,17 @@ func bind() -> void:
 	for i in vm.instances:
 		if i.dead or i.obj != obj_main:
 			continue
+		if i.owner >= 0 and (i.owner >= list.size() or not list[i.owner].active or not here(i.owner)):
+			# A player who is elsewhere (a room parked with them in it, then they left it).
+			i.dead = true
+			vm.inst_version += 1
+			continue
 		if i.owner < 0:
 			free.append(i)
 		if i.owner == primary or (main == null and i.owner < 0):
 			main = i
 	for p in list:
-		if not p.active:
+		if not p.active or not here(p.index):
 			continue
 		var cur = vm.player_insts[p.index].get(obj_main)
 		if cur != null and not cur.dead and cur.owner == p.index and vm.instances.has(cur):
@@ -396,7 +472,13 @@ func bind() -> void:
 		if main == null:
 			continue
 		var inst = null
-		if p.index == primary and main.owner < 0:
+		for i in vm.instances:
+			if not i.dead and i.obj == obj_main and i.owner == p.index:
+				inst = i     # the room made theirs already (made in their context)
+				break
+		if inst != null:
+			pass
+		elif p.index == primary and main.owner < 0:
 			inst = main
 			inst.owner = p.index
 			free.erase(main)
@@ -413,6 +495,31 @@ func bind() -> void:
 		vm.player_insts[p.index][obj_main] = inst
 		if p.index != primary:
 			vm.inst_keys[inst.id] = p.keys
+	# Back from a battle in a room that kept running for the others: where they were.
+	for p in list:
+		if p.back != null and p.inst != null and not p.inst.dead and here(p.index) and int(p.back[0]) == vm.room:
+			var at = null
+			if p.back[1] is String:
+				# Where the room starts its player (beside its save point), as when loading.
+				var rd = vm.meta["rooms"].get(vm.room_names[vm.room], {})
+				for ri in rd.get("instances", []):
+					if ri[0] == "obj_mainchara":
+						at = Vector2(float(ri[1]), float(ri[2]))
+						break
+				if at == null and p.index != primary and list[primary].inst != null and not list[primary].inst.dead:
+					at = Vector2(float(list[primary].inst.v["x"]), float(list[primary].inst.v["y"]))
+			else:
+				at = Vector2(float(p.back[1]), float(p.back[2]))
+			if at != null:
+				# On the 3-pixel grid walking keeps to (obj_mainchara's Create does the same).
+				at = Vector2(roundf(at.x / 3.0) * 3.0, roundf(at.y / 3.0) * 3.0)
+				p.inst.v["x"] = at.x
+				p.inst.v["y"] = at.y
+				p.inst.v["xprevious"] = at.x
+				p.inst.v["yprevious"] = at.y
+			p.back = null
+		elif p.back != null and here(p.index) and vm.room >= 0 and int(p.back[0]) != vm.room and not eng.mprooms._private_room(vm.room):
+			p.back = null     # they went somewhere else
 
 
 # ---------------------------------------------------------------- local tests

@@ -13,12 +13,14 @@ const Random = preload("res://gml/gml_random.gd")
 # Per-room fields of gml_vm.gd.
 const VM_FIELDS := ["instances", "by_id", "next_id", "room", "room_width", "room_height",
 	"room_speed", "pending_room", "step_no", "obj_changed_step", "_draw_pass",
-	"scoped", "in_scope", "inst_keys", "aim_split", "aim_skip"]
+	"scoped", "in_scope", "inst_keys", "aim_split", "aim_skip",
+	# its players (mp_rooms.gd): who is in it, their instances, whose values its objects see
+	"player_insts", "multi_players", "primary_owner", "claimed", "pending_owner", "scene_owner"]
 # Per-room fields of gml_builtins.gd.
 const BI_FIELDS := ["keys", "canvas", "relative", "rng", "audio_root", "players", "next_sound_id",
 	"draw_color", "draw_alpha", "draw_font", "halign", "valign",
 	"view_xview", "view_yview", "view_wview", "view_hview", "room_arr", "views_on",
-	"show_colour", "background_color", "tiles", "tiles_sorted", "next_tile_id"]
+	"show_colour", "background_color", "tiles", "tiles_sorted", "next_tile_id", "heard"]
 # Each world numbers its instances, sounds and tiles from its own base, so ids never
 # clash when a player (and their instances) moves from one world to another. World 0
 # keeps the game's own numbering.
@@ -53,14 +55,15 @@ static func empty(vm, k: int, seed := 0) -> RefCounted:
 	w.vm_state = {"instances": [], "by_id": {}, "next_id": base, "room": -1,
 		"room_width": 640, "room_height": 480, "room_speed": 30, "pending_room": -1,
 		"step_no": 0, "obj_changed_step": -1, "_draw_pass": 0,
-		"scoped": null, "in_scope": false, "inst_keys": {}, "aim_split": false, "aim_skip": {}}
+		"scoped": null, "in_scope": false, "inst_keys": {}, "aim_split": false, "aim_skip": {},
+		"player_insts": [], "multi_players": [], "primary_owner": 0, "claimed": [], "pending_owner": -1, "scene_owner": -1}
 	var rng = Random.new()
 	rng.set_seed(seed)
 	w.bi_state = {"keys": null, "canvas": null, "relative": false, "rng": rng, "audio_root": null,
 		"players": [], "next_sound_id": 100000 + int(ID_SPACING) * k,
 		"draw_color": 16777215, "draw_alpha": 1.0, "draw_font": -1, "halign": 0, "valign": 0,
 		"views_on": false, "show_colour": true, "background_color": 0.0,
-		"tiles": [], "tiles_sorted": true, "next_tile_id": 10000000 + int(ID_SPACING) * k}
+		"tiles": [], "tiles_sorted": true, "next_tile_id": 10000000 + int(ID_SPACING) * k, "heard": true}
 	# Fresh view and background arrays, made by the builtins' own reset on a scratch copy.
 	var bi = vm.builtins
 	var keep := {}

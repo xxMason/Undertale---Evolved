@@ -7,6 +7,7 @@ var vm
 var canvas = null          # a CanvasItem or a gml_recorder.gd
 var relative := false       # action_set_relative
 var audio_root: Node = null
+var heard := true    # false: a world this PC's player isn't in (mp_rooms.gd); its sounds go to its players only
 var keys
 var rng = preload("res://gml/gml_random.gd").new()   # GameMaker's own generator
 var fixed_seed := -1     # tests: randomize() re-seeds with this instead
@@ -502,8 +503,8 @@ func play_sound(snd: int, loop: bool) -> float:
 		"steps": ceili(stream.get_length() * 30.0 / pl.pitch_scale)}
 	# With several players: a short sound played for one player (their text's voice, their
 	# menu's blips) is heard by them only; music and longer sounds are everyone's.
-	entry["owner"] = vm.ctx_owner if (vm.owners_on and vm.ctx_owner >= 0 and not loop and stream.get_length() < 6.0) else -1
-	if int(entry["owner"]) >= 0 and int(entry["owner"]) != vm.primary_owner:
+	entry["owner"] = vm.ctx_owner if (vm.owners_on and vm.ctx_owner >= 0 and vm.ctx_owner != vm.scene_owner and not loop and stream.get_length() < 6.0) else -1
+	if not heard or int(entry["owner"]) > 0:    # player 1 is this PC's (the host's)
 		pl.bus = _muted_bus()    # someone else's: silent on this PC, sent to theirs (mp_net.gd)
 	_apply_volume(entry)
 	pl.play()

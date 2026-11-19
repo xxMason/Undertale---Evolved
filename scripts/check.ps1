@@ -132,10 +132,23 @@ $wok = $wsame -and @($wa).Count -ge 25 -and ("$wb" -match 'WORLDTEST world 1 in 
 Say $wok 'worlds: a second room running alongside changes nothing in the game' $(if ($wok) { '' } else { "same checksums: $wsame, lines $(@($wa).Count)" })
 # Stage 2: several players in one game. Player 2 reads a sign, eats a candy from their own
 # menu, and falls through a hole, each while player 1 does something else.
+$osc = ((0..7 | ForEach-Object { "$(10 + 20 * $_):37x8,$(20 + 20 * $_):39x8" }) + (0..83 | ForEach-Object { "$(230 + 8 * $_):90x2" })) -join ','
+$dk = ((0..9 | ForEach-Object { "$(250 + 20 * $_):37x8,$(260 + 20 * $_):39x8" }) + (0..229 | ForEach-Object { "$(460 + 8 * $_):90x2" })) -join ','
+$zz = (@('10:39x23,35:38x20') + (0..62 | ForEach-Object { "$(70 + 10 * $_):90x2" })) -join ','
 $mpruns = @(
     @('sign', @('--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '175', '--press', '40:39x15,80:37x15', '--pfeed', '2=10:39x7,20:38x25,60:90x2,100:90x2,140:90x2')),
-    @('menu', @('--room', 'room_ruins9', '--set', 'plot=9.2,hp=10,item.0=1,item.1=1', '--frames', '205', '--press', '40:39x15,80:37x15', '--pfeed', '2=30:67x2,50:90x2,70:90x2,90:90x2,120:90x2,150:90x2')),
-    @('hole', @('--room', 'room_ruins8', '--set', 'plot=9.2', '--frames', '155', '--pfeed', '2=10:39x90'))
+    @('menu', @('--room', 'room_ruins9', '--set', 'plot=9.2,hp=10,item.0=1,item.1=1', '--frames', '205', '--press', '40:39x15,80:37x15', '--pfeed', '2=30:67x2,50:90x2,70:90x2,90:90x2,120:90x2,150:90x2,175:90x2')),
+    @('hole', @('--room', 'room_ruins8', '--set', 'plot=9.2', '--frames', '155', '--pfeed', '2=10:39x90')),
+    # Stage 5: player 2 goes into another room alone, falls through its hole, and player 1 follows.
+    @('rooms', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '305', '--pfeed', '2=10:37x50,64:37x45', '--press', '200:37x50')),
+    # Stage 6: both walk back and forth, get random battles on the same frame and fight them (Z).
+    @('battles', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '955', '--press', $osc, '--pfeed', "2=$osc")),
+    # Saving: refused while player 2's menu is open, then saved for both.
+    @('save', @('--room', 'room_ruins7', '--set', 'plot=11', '--frames', '380', '--press', '20:40x8,40:90x2,110:90x2,125:90x2,150:90x2,190:90x2,260:90x2,275:90x2,300:90x2,330:90x2,350:90x2', '--pfeed', '2=20:67x2,170:88x2')),
+    # Player 2 (1 HP) is downed alone after player 1 saved, and comes back at the save.
+    @('death', @('--room', 'room_ruins7', '--set', 'plot=11,hp=1', '--frames', '2405', '--press', '20:40x8,40:90x2,110:90x2,125:90x2,150:90x2,220:90x2,240:90x2', '--pfeed', "2=$dk")),
+    # Toriel's scene in room_ruins19 waits for player 2, who says Yes once free and is brought there.
+    @('gather', @('--room', 'room_ruins19', '--set', 'plot=16', '--frames', '700', '--press', '80:40x100', '--pfeed', "2=$zz"))
 )
 foreach ($r in $mpruns) {
     $mo = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP "ube_check_mp_$($r[0])") --players 2 --mpcheck $r[0] @($r[1]) 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' }

@@ -87,7 +87,11 @@ var room := -1
 var room_width := 640
 var room_height := 480
 var room_speed := 30
-var pending_room := -1
+var pending_room := -1:
+	set(v):
+		pending_room = v
+		pending_owner = ctx_owner    # whose room_goto it was (mp_rooms.gd moves only them)
+var pending_owner := -1
 # Called once during Draw, just before the first instance deeper in front than
 # draw_hook_depth (the trace recorder's place in the real game's draw order).
 var draw_hook := Callable()
@@ -128,6 +132,9 @@ var primary_owner := 0
 # for each player in multi_players, in their context and with their own copy of its
 # variables (Inst.pv), so several players can have it open at once.
 var multi_objs := {}             # object index -> true
+var gate_objs := {}              # object index -> true: story triggers that can wait for everyone
+var scene_owner := -1            # the player whose story scene this world is playing: their text is everyone's
+var event_gate := Callable()     # (instance, player) -> bool: may the trigger run now
 var multi_players: Array = []    # player indices
 # Drawing (stage 3): world objects whose Draw places things relative to the view (faders,
 # text boxes, HUD) are "anchored": the recorder keeps the view they were drawn against, so on
@@ -770,13 +777,21 @@ func resolve(target, ctx: Dictionary) -> Array:
 			return mine
 	# Cached per object until an instance is created, destroyed or changes object.
 	var hit = _resolve_cache.get(n)
+	var out: Array
 	if hit != null and hit[0] == inst_version:
-		return hit[1]
-	var out: Array = []
-	for i in instances:
-		if not i.dead and is_child_of(i.obj, n):
-			out.append(i)
-	_resolve_cache[n] = [inst_version, out]
+		out = hit[1]
+	else:
+		out = []
+		for i in instances:
+			if not i.dead and is_child_of(i.obj, n):
+				out.append(i)
+		_resolve_cache[n] = [inst_version, out]
+	# A player's code doesn't see what belongs to another player (their battle starting,
+	# their fade, the sign they are reading): each acts as if alone.
+	if owners_on and ctx_owner >= 0:
+		for i in out:
+			if i.owner >= 0 and i.owner != ctx_owner:
+				return out.filter(func(x): return x.owner < 0 or x.owner == ctx_owner)
 	return out
 
 
@@ -856,6 +871,11 @@ func perform_event(inst: Inst, type: int, sub: int, other) -> bool:
 
 
 func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, other) -> void:
+	# A story scene touched by one player while others are elsewhere may wait for them
+	# (mp_scenes.gd): its trigger does nothing until then.
+	if type == EV_COLLISION and gate_objs.has(inst.obj) and owners_on and inst.owner < 0 and other is Inst and other.owner >= 0 and event_gate.is_valid():
+		if not event_gate.call(inst, other.owner):
+			return
 	var pt := Time.get_ticks_usec() if prof != null else 0
 	if event_watch != null and inst == event_watch:
 		event_log.append([step_no, code])
@@ -1729,7 +1749,7 @@ func draw_frame() -> void:
 				var anchor = null
 				if i.owner < 0 and anchored_objs.has(i.obj):
 					anchor = Vector2(float(builtins.view_xview[0]), float(builtins.view_yview[0]))
-				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])), i.owner if (i.owner >= 0 and private_objs.has(i.obj)) else -1, anchor)
+				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])), i.owner if (i.owner >= 0 and i.owner != scene_owner and private_objs.has(i.obj)) else -1, anchor)
 			else:
 				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])))
 		var n0 := instances.size()

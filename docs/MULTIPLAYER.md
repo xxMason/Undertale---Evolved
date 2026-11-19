@@ -271,7 +271,9 @@ in the Ruins.
   as numbers: sprite and frame, background, font), about 13 KB a frame before compression and
   1 to 1.5 KB after (ENet's zstd): 30 to 45 KB/s per friend.
 - Keys: every frame's keys, sent with the last three; the host queues them so a quick tap is
-  never lost, and merges identical waiting frames so a backlog never delays later keys.
+  never lost, and merges identical waiting frames when more than two wait, so a backlog never
+  delays later keys. When the friend's keys are late the host carries on with what they held
+  and skips those frames when they arrive, so a held key lasts as long as it was held.
 - Your own walking is predicted: keys the host hasn't used yet move your character and camera at
   once (3 pixels a frame); a direction the host shows blocked (a wall) isn't predicted until
   it's let go. Measured on one PC: the host uses a friend's keys 2 frames after they're
@@ -288,3 +290,53 @@ in the Ruins.
 
 Note for measuring: Windows slows down windowless test runs after about 15 seconds (every phase
 2.5x slower). Measure frame times with a window.
+
+### Stage 5: many rooms (done 2026-11-19)
+
+`godot/mp_rooms.gd`. Every room with a player in it is a running world; each has a lead (the
+player whose camera and values the room's own objects follow) and members.
+
+- A door used by one player while others stay sends only that player: their character and the
+  door's fade leave the room, the door is ready again for the others, and they join the world
+  already running the room they go to, or a new one (with copies of the persistent things
+  everyone shares, like the overworld controller, and its own random numbers and sound).
+- When everyone in a world leaves together, the world changes room as in the one-player game,
+  or joins the world already running that room. A world nobody is in ends (a persistent room is
+  parked as usual).
+- Every global is per player except a shared list (story flags, save bookkeeping, settings).
+  The host's PC plays the sounds of its own player's world; the others go to their players.
+- Found and fixed on the way: a new world's character was made twice (the room made one for the
+  player and binding made a second), so the hole in room_ruins8 kept catching the spare one and
+  the player fell forever.
+- Measured: 2 players in different rooms average 3.2 ms a frame on the host (headless, 5 ms
+  worst after warm-up); the frame where one player changes room took 8 ms.
+- Tests: `--mpcheck rooms` (player 2 goes into room_ruins8 alone and falls through its hole,
+  player 1 follows into player 2's world), `--roomlog`, `--recdump F` (the host's draw list).
+- Not yet: the parallax backgrounds of later areas (`obj_backgrounder_*`) follow one camera.
+
+### Stage 6: rules (in progress 2026-11-19)
+
+- **Encounters per player.** Each room's encounter object runs once per player with their own
+  step count, so everyone gets their own random battles, even in the same room on the same
+  frame. A battle room is never shared by walking in: each battle is its own world.
+- **A player's code doesn't see another player's things** (their battle starting, their fade,
+  the sign they are reading): each acts as if alone. A room's own objects are nobody's.
+- **Back from a battle** in a room that kept running for the others, a player is where they were.
+- **Solo death.** A player downed alone while others play on sees Undertale's game over screen,
+  then comes back in the room of the last save, where loading puts the player, on full HP with
+  their items as they were. Everyone else is told "Greg died." The story isn't loaded back.
+  Game over is only for a player alone in the game (or, with shared battles, everyone down).
+- **Saving.** Anyone can save; file0 keeps the host's own things whoever saved, players.json
+  beside it everyone's (by name, so a friend who joins again later gets theirs back), and
+  everyone is told who saved. The save menu doesn't open while another player is in a menu or
+  a battle ("Can't save now: Greg is in a menu."). An LV gained by anyone gives everyone that
+  LV's HP, AT and DF.
+- **Gather scenes** (`godot/mp_scenes.gd`): Toriel's and Flowey's triggers. Walking into one
+  while others are in other rooms holds the trigger and shows "Waiting for 1 more player...
+  (X: go on)"; the others get "Teleport to Story Event?" (Yes / No, `godot/mp_ui.gd`), once they
+  are free if they are busy. Yes brings them beside the player who found it; No is reported to
+  that player. Then the scene plays, and what that player reads shows on every screen in the
+  room (with its sounds). Not yet: scenes that start as a room loads (Toriel at the training
+  dummy, in her house) only play for whoever is in the room; players brought to a scene stand
+  on the spot of the one who found it.
+- Tests: `--mpcheck battles / save / death / gather`.

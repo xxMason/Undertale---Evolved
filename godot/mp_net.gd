@@ -90,6 +90,7 @@ func start_host(port := PORT, pw := "") -> String:
 	if eng.mp == null:
 		eng.mp = MpPlayers.new()
 		eng.mp.setup(eng, [eng.net_name()])
+		eng.mp_started()
 	_log("hosting on port %d" % port)
 	return ""
 
@@ -200,14 +201,26 @@ func _keys_for(peer: ENetPacketPeer) -> Array:
 	if not peers.has(peer):
 		return []
 	var p: Dictionary = peers[peer]
+	var q: Array = p["keys"]
+	# Frames this PC already played with the friend's held keys while waiting for theirs:
+	# those frames, when they come with the same keys, were played, so a held key lasts as
+	# long as the friend held it.
+	while int(p.get("ahead", 0)) > 0 and not q.is_empty():
+		if q[0][1] != p["held"]:
+			p["ahead"] = 0
+			break
+		p["ack"] = q.pop_front()[0]
+		p["ahead"] = int(p["ahead"]) - 1
 	# A backlog (from joining, or a burst of packets) would delay every key after it: frames
 	# holding the same keys as the next one are merged, so no tap is ever lost.
-	while p["keys"].size() > 1 and p["keys"][0][1] == p["keys"][1][1]:
-		p["keys"].pop_front()
-	if not p["keys"].is_empty():
-		var e: Array = p["keys"].pop_front()
+	while q.size() > 2 and q[0][1] == q[1][1]:
+		q.pop_front()
+	if not q.is_empty():
+		var e: Array = q.pop_front()
 		p["ack"] = e[0]
 		p["held"] = e[1]
+	elif not (p["held"] as Array).is_empty():
+		p["ahead"] = mini(int(p.get("ahead", 0)) + 1, 6)
 	return p["held"]
 
 
@@ -239,13 +252,31 @@ func notice(text: String) -> void:
 				_send(peer, {"t": "notice", "text": text})
 
 
+# A notice on one player's screen: this PC's player (the host's, index 0), or a friend's.
+func tell(index: int, text: String) -> void:
+	if index == 0:
+		if eng.has_method("mp_notice"):
+			eng.mp_notice(text)
+		return
+	for peer in peers:
+		if int(peers[peer]["index"]) == index:
+			_send(peer, {"t": "notice", "text": text})
+			return
+	print("NOTICE to player %d: %s" % [index + 1, text])
+
+
 # ---------------------------------------------------------------- frames
 
 # Player `who`'s screen this frame, as bytes: a small header (var_to_bytes) and the drawing
 # packed by _put (about a third of var_to_bytes' size before compression).
 func encode_frame(who: int) -> PackedByteArray:
-	var rec = eng.rec
 	var pl = eng.mp.list[who]
+	# The world they're in (players can be in different rooms, mp_rooms.gd).
+	var rooms = eng.mprooms
+	var r = rooms.room_of(who) if rooms != null else null
+	var here: bool = r == null or r == rooms.cur
+	var rec = eng.rec if r == null else r.rec
+	var lead: int = eng.mp.primary if r == null else r.lead
 	var b := StreamPeerBuffer.new()
 	var skip := false
 	var n := 0
@@ -281,9 +312,11 @@ func encode_frame(who: int) -> PackedByteArray:
 		for a in args:
 			_put(b, a)
 		n += 1
-	var view: Vector2 = rec.view if who == eng.mp.primary else pl.view
-	var frame := {"f": eng.frames, "v": view, "sc": rec.view_scale, "n": n, "o": b.data_array, "s": _sounds_for(who),
-		"rw": eng.vm.room_width, "rh": eng.vm.room_height}
+	var view: Vector2 = rec.view if who == lead else pl.view
+	var vs: Dictionary = {} if here else r.w.vm_state
+	var frame := {"f": eng.frames, "v": view, "sc": rec.view_scale, "n": n, "o": b.data_array,
+		"s": _sounds_for(who, eng.bi.players if here else r.w.bi_state.get("players", [])),
+		"rw": eng.vm.room_width if here else vs.get("room_width", 640), "rh": eng.vm.room_height if here else vs.get("room_height", 480)}
 	# For the friend's own movement prediction: their character, whether it can walk, and the
 	# last of their key frames the game has used.
 	var inst = pl.inst
@@ -291,7 +324,11 @@ func encode_frame(who: int) -> PackedByteArray:
 		frame["me"] = inst.id
 		frame["pp"] = Vector2(float(inst.v["x"]), float(inst.v["y"]))
 		frame["dx"] = float(inst.v["x"]) - float(inst.v.get("xprevious", inst.v["x"]))
-		frame["mv"] = float(inst.v.get("movement", 0.0)) == 1.0 and float(eng.mp.value(who, "interact")) == 0.0 and eng.vm.pending_room == -1
+		frame["mv"] = float(inst.v.get("movement", 0.0)) == 1.0 and float(eng.mp.value(who, "interact")) == 0.0 and int(eng.vm.pending_room if here else vs.get("pending_room", -1)) == -1 and not (eng.mpui != null and eng.mpui.busy(who))
+	if eng.mpui != null:
+		var ust: Dictionary = eng.mpui.state_for(who)
+		if not ust.is_empty():
+			frame["ui"] = ust
 	for peer in peers:
 		if int(peers[peer]["index"]) == who:
 			frame["ack"] = int(peers[peer].get("ack", -1))
@@ -365,9 +402,9 @@ func _take(b: StreamPeerBuffer):
 	return null
 
 
-func _sounds_for(who: int) -> Array:
+func _sounds_for(who: int, list: Array) -> Array:
 	var out: Array = []
-	for p in eng.bi.players:
+	for p in list:
 		var o := int(p.get("owner", -1))
 		if o >= 0 and o != who:
 			continue
@@ -536,6 +573,7 @@ func _apply(fr: Dictionary) -> void:
 				continue
 			rec.ops.append([name, args])
 	eng.net_frame = int(fr["f"])
+	eng.mp_ui_state = fr.get("ui", {})
 	_predict(fr)
 	if log_on and fr.has("pp"):
 		var shown: Vector2 = fr["pp"] + predicted

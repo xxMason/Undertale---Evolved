@@ -28,6 +28,10 @@ const CoopState = preload("res://coop_state.gd")
 const CoopNet = preload("res://coop_net.gd")
 const CoopPartner = preload("res://coop_partner.gd")
 const MpNet = preload("res://mp_net.gd")
+const MpRooms = preload("res://mp_rooms.gd")
+const MpSaves = preload("res://mp_saves.gd")
+const MpUi = preload("res://mp_ui.gd")
+const MpScenes = preload("res://mp_scenes.gd")
 const SansSpeech = preload("res://sans_speech.gd")
 const CoopCheats = preload("res://coop_cheats.gd")
 const World = preload("res://gml/gml_world.gd")
@@ -685,6 +689,8 @@ func coop_friends() -> Dictionary:
 
 func _on_save_written(path: String) -> void:
 	debug._save_written(path)
+	if mpsaves != null:
+		mpsaves.written(path)
 	var fn := path.get_file()
 	if partner == null or not (fn == "file0" or fn == "file8"):
 		return
@@ -716,7 +722,9 @@ func _patch_save(path: String, prof: Dictionary) -> void:
 		return str(int(r)) if r == floorf(r) and absf(r) < 1e15 else String.num(r)
 	var setl := func(i: int, v) -> void:
 		if i < lines.size():
-			lines[i] = num.call(v) + ("" if lines[i].ends_with("") else "")
+			lines[i] = num.call(v) + ("
+" if lines[i].ends_with("
+") else "")
 	for k in SAVE_LINES:
 		if prof.has(k):
 			setl.call(SAVE_LINES[k], prof[k])
@@ -733,6 +741,8 @@ func _patch_save(path: String, prof: Dictionary) -> void:
 # The game read its save (Continue, a reset, a game over): the friend's character comes back
 # from the same save, and the host leads again (file0 holds the host's things).
 func _on_save_read(path: String) -> void:
+	if mpsaves != null:
+		mpsaves.read(path)
 	if path.get_file() == "file0":
 		_left_friends.clear()    # a load: everyone as saved
 	if partner == null or path.get_file() != "file0":
@@ -1248,8 +1258,13 @@ func _game_frame() -> void:
 	while vm.pending_room != -1 and guard < 4:
 		guard += 1
 		var r: int = vm.pending_room
-		vm.pending_room = -1
-		vm.load_room(r)
+		# Several players: a door used by one of them moves only them (mp_rooms.gd).
+		if mprooms != null:
+			if not mprooms.room_change(r):
+				continue
+		else:
+			vm.pending_room = -1
+			vm.load_room(r)
 		vm.step_frame(keys)
 		vm.room_frame_end()
 	if mp != null:
@@ -1261,6 +1276,8 @@ func _game_frame() -> void:
 		print("MP f=%d %s worst=%dus avg=%dus | %s" % [frames, vm.room_names[vm.room], _mp_worst, _mp_sum / maxi(1, _mp_n), mp.log_line() if mp != null else "solo"])
 		if mpnet != null and mpnet.is_host():
 			print("NET f=%d %s" % [frames, mpnet.status_line()])
+		if mprooms != null and mprooms.rooms.size() > 1:
+			print("ROOMS f=%d %s" % [frames, mprooms.status()])
 		if vm.prof != null:
 			# With --prof: where the time went since the last line (microseconds per frame).
 			var d: Array = []
@@ -1384,7 +1401,22 @@ func _game_frame() -> void:
 		bi.view_xview[0] = cam_keep[0]
 		bi.view_yview[0] = cam_keep[1]
 	bi.canvas = null
+	if mprooms != null:
+		# Every other room with a player in it runs its frame too; then the host's world is
+		# loaded again (and becomes the one its player went to, if they changed room).
+		mprooms.step_others()
+		mpscenes.end_frame()
+		mprooms.settle()
 	_world_test_frame()
+	var rda := OS.get_cmdline_user_args().find("--recdump")
+	if rda >= 0 and frames == int(OS.get_cmdline_user_args()[rda + 1]):    # testing
+		print("RECDUMP f=%d view=%s scale=%s ops=%d" % [frames, rec.view, rec.view_scale, rec.ops.size()])
+		for o in rec.ops:
+			if o[0] == "@owner":
+				var ins = vm.by_id.get(int(o[1][0]))
+				print("  @owner %s %s owner=%s" % [o[1], vm.obj_names[ins.obj] if ins != null else "?", ins.owner if ins != null else "?"])
+			elif o[0] == "draw_rect":
+				print("  rect %s %s" % [o[1][0], o[1][1]])
 	if OS.get_cmdline_user_args().has("--viewlog") and frames % 50 == 0:
 		print("VIEW f=%d on=%s view=%s scale=%s port=%s" % [frames, bi.views_on, rec.view, rec.view_scale, bi.room_arr["view_wport"][0]])
 	last_logic_us = Time.get_ticks_usec() - tl
@@ -2035,14 +2067,20 @@ func _draw() -> void:
 			if mp != null and screen == Screen.GAME:
 				# This PC's player's screen: their camera, without the others' text and menus.
 				var me: int = clampi(view_as, 0, mp.count() - 1)
-				if me == mp.primary:
-					rec.replay(self, rf, me)
+				var mr = mprooms.room_of(me) if mprooms != null else null
+				var mrec = mr.rec if mr != null else rec
+				if me == (mr.lead if mr != null else mp.primary):
+					mrec.replay(self, rf, me)
 				else:
-					rec.replay(self, rf, me, mp.list[me].view, mp.list[me].prev_view)
+					mrec.replay(self, rf, me, mp.list[me].view, mp.list[me].prev_view)
 			else:
 				rec.replay(self, rf)
 			if not _notices.is_empty() and screen == Screen.GAME:
 				_draw_notices()
+			if screen == Screen.GAME:
+				var ust: Dictionary = mp_ui_state if net_client else (mpui.state_for(clampi(view_as, 0, mp.count() - 1)) if mpui != null and mp != null else {})
+				if not ust.is_empty():
+					MpUi.draw(self, ust)
 			perf_draw_us += Time.get_ticks_usec() - td
 			perf_draws += 1
 			perf_draw_max = maxi(perf_draw_max, Time.get_ticks_usec() - td)
@@ -2946,6 +2984,7 @@ func _mp_frame_start() -> void:
 		for k in int(args[pi + 1]):
 			names.append(["Kyle", "Greg", "Ann", "Sam"][k % 4])
 		mp.setup(self, names)
+		mp_started()
 		var fi := args.find("--pfeed")
 		if fi >= 0:
 			for part in String(args[fi + 1]).split(";", false):
@@ -2970,6 +3009,24 @@ var mpnet = null           # mp_net.gd
 var net_client := false    # this PC shows the host's game instead of running one
 var net_frame := 0         # the host's frame number of the picture shown
 var _notices: Array = []   # [text, until ms]: "Greg joined." and the like
+
+
+var mprooms = null          # mp_rooms.gd: players in different rooms
+var mpsaves = null          # mp_saves.gd: saving for everyone
+var mpui = null             # mp_ui.gd: each player's prompts ("Teleport to Story Event?")
+var mpscenes = null         # mp_scenes.gd: story scenes that gather the party
+var mp_ui_state := {}       # a friend's PC: the prompt the host sent for this player
+
+
+func mp_started() -> void:
+	mprooms = MpRooms.new()
+	mprooms.setup(self)
+	mpsaves = MpSaves.new()
+	mpsaves.setup(self)
+	mpui = MpUi.new()
+	mpui.setup(self)
+	mpscenes = MpScenes.new()
+	mpscenes.setup(self)
 
 
 func net_name() -> String:

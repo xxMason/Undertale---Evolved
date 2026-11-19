@@ -158,7 +158,7 @@ try {
 
 # A zip from GitHub has no MANIFEST.txt: its own file list is the new one, kept for next time.
 if (-not $entries.ContainsKey('MANIFEST.txt')) {
-    $list = @($entries.Keys | Sort-Object | ForEach-Object { $_ -replace '\', '/' }) + 'MANIFEST.txt'
+    $list = @($entries.Keys | Sort-Object | ForEach-Object { $_ -replace '\\', '/' }) + 'MANIFEST.txt'
     [System.IO.File]::WriteAllText((Join-Path $root 'MANIFEST.txt'), (($list -join "`r`n") + "`r`n"))
 }
 Write-Host ("Updated: {0} changed, {1} new, {2} removed, {3} unchanged." -f $changed, $added, $gone.Count, $same)

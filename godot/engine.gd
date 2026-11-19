@@ -22,6 +22,15 @@ const Settings = preload("res://engine_save.gd")
 const ModLoader = preload("res://mod_loader.gd")
 const GameBot = preload("res://game_bot.gd")
 const DebugMenu = preload("res://debug_menu.gd")
+const FrontMenu = preload("res://front_menu.gd")
+const Universes = preload("res://universes.gd")
+const CoopState = preload("res://coop_state.gd")
+const CoopNet = preload("res://coop_net.gd")
+const CoopPartner = preload("res://coop_partner.gd")
+const SansSpeech = preload("res://sans_speech.gd")
+const CoopCheats = preload("res://coop_cheats.gd")
+const World = preload("res://gml/gml_world.gd")
+const MpPlayers = preload("res://mp_players.gd")
 
 const RETURN_ROOM := 9999   # global.currentroom: going here means the battle is over
 
@@ -84,7 +93,7 @@ const BOSSES := ["Napstablook", "Toriel", "Papyrus", "Mad Dummy", "Glad Dummy", 
 	"Sans", "Asgore", "Asriel Dreemurr"]
 const AREAS := ["RUINS", "SNOWDIN", "WATERFALL", "HOTLAND", "CORE", "JUDGEMENT HALL", "BARRIER"]
 
-enum Screen { LIST, BATTLE, RESULT, ERROR, GAME }
+enum Screen { LIST, BATTLE, RESULT, ERROR, GAME, FRONT }
 
 var vm
 var bi
@@ -151,6 +160,14 @@ var debug_used: Array = []     # what was changed with it, for saves and bug rep
 var game_speed := 1.0          # debug menu: game frames per physics tick
 var _speed_acc := 0.0
 var settings: Dictionary = {}
+var front = null               # title screen, universes, settings (front_menu.gd)
+var coop = null                # LAN co-op link (coop_net.gd)
+var coop_vm_keys = null        # co-op: the keys the game itself gets this frame
+var coop_partner_keys: Array = []   # co-op: the other player's keys this frame
+var friend_cheats = null       # a co-op friend's F5 with cheats on (coop_cheats.gd)
+var sans = null                # a friend's first F5 without cheats (sans_speech.gd)
+var partner = null             # co-op: the second player in the overworld (coop_partner.gd)
+var universe: Dictionary = {}  # the universe being played ({} in the Battle Engine and tests)
 
 
 func _ready() -> void:
@@ -208,6 +225,40 @@ func _ready() -> void:
 	debug = DebugMenu.new()
 	add_child(debug)
 	debug.setup(self)
+	bi.on_save_written = _on_save_written
+	sans = SansSpeech.new()
+	sans.setup(self)
+	friend_cheats = CoopCheats.new()
+	add_child(friend_cheats)
+	friend_cheats.setup(self)
+	bi.on_save_read = _on_save_read
+	# Tests and screenshots: a name for this run only (settings stay as they are), universes
+	# kept in a folder of their own.
+	i = args.find("--as")
+	if i >= 0 and i + 1 < args.size():
+		settings["_readonly"] = true
+		settings["player/name"] = args[i + 1]
+		settings["player/id"] = "test-" + args[i + 1].to_lower()
+	i = args.find("--universesdir")
+	if i >= 0 and i + 1 < args.size():
+		Universes.ROOT = args[i + 1]
+		Universes.testing = true
+	if args.has("--unitest"):
+		_universe_test()
+		get_tree().quit()
+		return
+	if String(settings.get("player/id", "")) == "":
+		settings["player/id"] = Universes.new_id()
+		_save_settings()
+	front = FrontMenu.new()
+	front.setup(self)
+	coop = CoopNet.new()
+	add_child(coop)
+	coop.setup(self)
+	i = args.find("--tps")
+	if i >= 0 and i + 1 < args.size():
+		Engine.physics_ticks_per_second = int(args[i + 1])     # tests: run co-op faster
+		Engine.max_physics_steps_per_frame = 16
 	i = args.find("--frames")
 	if i >= 0 and i + 1 < args.size():
 		frame_cap = int(args[i + 1])
@@ -270,16 +321,54 @@ func _ready() -> void:
 			return
 		await _start_playback(rp, DisplayServer.get_name() == "headless" or args.has("--fast"))
 		return
-	if auto_index >= 0:
+	# Co-op tests: --coophost PORT (hosts the game, booting as --game does) or --coopjoin
+	# IP:PORT (joins it). Both play in real time (--tps speeds that up) until --frames.
+	i = args.find("--coophost")
+	var j := args.find("--coopjoin")
+	if i >= 0 and i + 1 < args.size():
+		var why: String = coop.start_host(int(args[i + 1]))
+		if why != "":
+			print("COOP error: " + why)
+			get_tree().quit(2)
+			return
+		start_game()
+	elif j >= 0 and j + 1 < args.size():
+		var hp: PackedStringArray = args[j + 1].split(":")
+		front.begin()
+		front.page = "join"
+		coop.join(hp[0], int(hp[1]) if hp.size() > 1 else CoopNet.PORT)
+	elif auto_index >= 0:
 		start_battle(auto_index)
 	elif args.has("--game"):
 		start_game()
 		if DisplayServer.get_name() == "headless":
 			# Tests: as fast as possible, not at 30 frames a second.
+			if args.has("--coopsavetest"):
+				_coop_save_test()
+				get_tree().quit()
+				return
+			i = args.find("--snaptest")
+			if i >= 0 and i + 2 < args.size():
+				_snap_test(int(args[i + 1]), int(args[i + 2]))
+				get_tree().quit()
+				return
 			while screen == Screen.GAME and frames < frame_cap:
 				_game_frame()
 			if screen != Screen.GAME:
 				get_tree().quit()
+	elif not args.has("--tab") and not setup_open and not args.has("--list"):
+		if args.has("--fronttest"):
+			settings["_readonly"] = true
+			settings["player/name"] = ""
+		front.begin()
+		if args.has("--fronttest"):
+			front.run_test()
+		if args.has("--jointest"):
+			front.run_join_test()
+		# --front PAGE [MODE] (screenshots, tests): open a page of the front end directly.
+		i = args.find("--front")
+		if i >= 0 and i + 1 < args.size():
+			front.open_page(args[i + 1], args[i + 2] if i + 2 < args.size() and not args[i + 2].begins_with("--") else "")
 
 
 # The debug menu's view of the engine.
@@ -295,7 +384,630 @@ func in_battle_room() -> bool:
 	return vm.room >= 0 and (vm.room_names[vm.room] == "room_battle" or vm.room_names[vm.room] == "room_floweybattle")
 
 
+# ---------------------------------------------------------------- you, and universes
+
+# The person playing: a random id made once per install, and their own (human) name.
+func player() -> Dictionary:
+	return {"id": String(settings.get("player/id", "")), "name": String(settings.get("player/name", ""))}
+
+
+func set_player_name(n: String) -> void:
+	settings["player/name"] = n
+	_save_settings()
+
+
+func play_universe(u: Dictionary) -> void:
+	universe = u
+	Universes.touch(u, player())
+	start_game()
+
+
+func host_universe(u: Dictionary, port := CoopNet.PORT) -> void:
+	var why: String = coop.start_host(port)
+	if why != "":
+		_toast(why, 6000)
+	play_universe(u)
+	if why == "":
+		_toast("Hosting %s. Friends on your network can join now." % Universes.display_name(u), 5000)
+
+
+# ---------------------------------------------------------------- co-op (coop_net.gd calls these)
+
+# Keys this PC sends for frame f: the test scripts' (--press, --bot) or the keyboard.
+var _bot_fed := false
+
+
+# --coopbot (testing): plays this PC's battle turns: MERCY, then Spare, or Revive once ready.
+func _coop_bot_keys(f: int) -> Array:
+	if f % 2 == 1 or partner.leader != coop.role:
+		return [90] if f % 16 == 0 else []
+	var g: Dictionary = vm.globals
+	if float(g.get("myfight", 0.0)) != 0.0 or float(g.get("mnfight", 0.0)) != 0.0:
+		return [90] if f % 16 == 0 else []
+	var b = partner.battle
+	var bm := float(g.get("bmenuno", 0.0))
+	if f % 8 != 0:
+		return []
+	# --coopbot who: the first turn with an item and a hurt teammate feeds them.
+	var feed: bool = OS.get_cmdline_user_args().has("who") and not _bot_fed and not b.down[partner.leader_other()] 		and float(partner.profile.get("hp", 0.0)) < float(g.get("maxhp", 20.0)) and b._g("item", [[0.0]])[0][0] != 0.0
+	if bm == 0.0:
+		# MERCY once a Revive is ready, else ACT (Check), which passes the turn and keeps the fight going.
+		var want := 2.0 if feed else (3.0 if b.revive_shown() or (b.down[partner.leader_other()] and b.revive_ready()) else 1.0)
+		return [39] if b._bm(0) != want else [90]
+	if bm == 2.0 or bm == 10.0:
+		return [90]
+	if bm >= 3.0 and bm < 4.0:
+		if b.who < 0:
+			return [90]
+		if b.who == 0:
+			return [40]
+		_bot_fed = true
+		return [90]
+	if bm == 4.0:
+		if b.revive_shown() and b.revive_ready():
+			return [90] if b.revive_sel else [40]
+		return [38] if b._bm(4) != 0.0 and not b.revive_sel else ([40] if b.revive_sel else [90])
+	return [88]
+
+
+func coop_local_keys(f: int) -> Array:
+	if _game_press == null:
+		_game_auto_keys()
+	if bot != null:
+		return bot.keys()
+	if friend_cheats.open:
+		return []
+	if sans.open:
+		# The speech has this PC's keys; the game gets none from it meanwhile.
+		var held: Array = keys.sample_local()
+		sans.tick(held.has(90) or held.has(13))
+		return []
+	if OS.get_cmdline_user_args().has("--coopbot") and partner != null and partner.battle.active:
+		return _coop_bot_keys(f)
+	if not _game_press.is_empty():
+		var held: Array = []
+		for p in _game_press:
+			if f >= p[0] and f < p[0] + p[2]:
+				held.append(p[1])
+		return held
+	if debug != null and debug.open:
+		return []
+	return keys.sample_local()
+
+
+# One frame of the shared game. For now the host steers the game's own player; the other
+# player's keys are kept for their own character.
+func coop_run_frame(host_keys: Array, client_keys: Array) -> void:
+	# Copies: co-op battles may hold back a key from the game (coop_battle.gd), and these
+	# arrays are the frame's record.
+	host_keys = host_keys.duplicate()
+	client_keys = client_keys.duplicate()
+	if partner != null:
+		partner.battle.before_step(host_keys, client_keys)
+		# The other player moves first and may become the leader (coop_partner.gd); the game
+		# then gets the leader's keys.
+		partner.before_step(client_keys if partner.leader == "host" else host_keys)
+		coop_vm_keys = host_keys if partner.leader == "host" else client_keys
+		coop_partner_keys = client_keys if partner.leader == "host" else host_keys
+		# Game over: either player can go on (it's both of theirs).
+		if vm.room >= 0 and String(vm.room_names[vm.room]).begins_with("room_gameover"):
+			var both: Array = host_keys.duplicate()
+			for k in client_keys:
+				if not both.has(k):
+					both.append(k)
+			coop_vm_keys = both
+	else:
+		coop_vm_keys = host_keys
+		coop_partner_keys = client_keys
+	if debug != null:
+		debug.before_frame()
+	var hp_before := float(vm.globals.get("hp", 0.0))
+	var lead_before: String = partner.leader if partner != null else ""
+	_game_frame()
+	coop_vm_keys = null
+	# A save point heals whoever used it (obj_savepoint Alarm 0); in co-op, both.
+	if partner != null and partner.leader == lead_before and not partner.battle.active:
+		var mx := float(vm.globals.get("maxhp", 20.0))
+		if hp_before < mx and float(vm.globals.get("hp", 0.0)) >= mx and float(vm.globals.get("interact", 0.0)) != 0.0 				and vm.first_of(float(vm.obj_index.get("obj_savepoint", -1)), {"self": null, "other": null}) != null:
+			partner.profile["hp"] = maxf(float(partner.profile.get("hp", mx)), mx)
+
+
+var _leave_hold := 0
+
+
+func coop_leave() -> void:
+	_drop_partner()
+	var who := String(coop.partner.get("name", "the host"))
+	coop.stop()
+	for p in bi.players:
+		p["player"].stop()
+	universe = {}
+	front.back_to_title()
+	front._show(["You left " + who + "'s game."], "title")
+
+
+func coop_partner_joined(p: Dictionary) -> void:
+	_toast("%s joined!" % p.get("name", "Someone"), 4000)
+	partner = CoopPartner.new()
+	partner.setup(self)
+	partner.new_profile(float(vm.globals.get("gold", 0.0)))
+	# Been here before: their character as it was at the universe's last save.
+	var known: Dictionary = coop_friends().get(String(p.get("id", "")), {})
+	if _left_friends.has(String(p.get("id", ""))):
+		for k in _left_friends[String(p.get("id", ""))]:
+			partner.profile[k] = _left_friends[String(p.get("id", ""))][k]
+		partner.profile["hp"] = maxf(1.0, float(partner.profile.get("hp", 1.0)))
+	elif not known.is_empty():
+		var pr: Dictionary = known.get("profile", {})
+		for k in pr:
+			partner.profile[k] = pr[k]
+		if partner.profile.get("item") is Array and not (partner.profile["item"] as Array).is_empty():
+			partner.profile["item"] = CoopPartner.bag(partner.profile["item"][0])
+		partner.profile["hp"] = vm.globals.get("maxhp", 20.0)
+	var mh := OS.get_cmdline_user_args().find("--matehp")    # testing: the friend starts on this HP
+	if mh >= 0:
+		partner.profile["hp"] = float(OS.get_cmdline_user_args()[mh + 1])
+	if not universe.is_empty():
+		Universes.touch(universe, p)
+
+
+# ---------------------------------------------------------------- co-op saves
+# The universe's save holds both characters, written at the same moment: file0 / file8 always
+# hold the host's own (patched after the game writes them, whoever saved), and
+# coop_friends.json each friend's, by their player id. A load (or a reset) brings both back.
+const FRIENDS_FILE := "coop_friends.json"
+# file0 lines of each player's own things (scr_saveprocess); items are 12, 14, ... 26.
+const SAVE_LINES := {"wstrength": 5, "adef": 7, "gold": 10, "weapon": 28, "armor": 29}
+
+
+# One player's own things ("host" / "client"), wherever they are right now.
+func coop_character(who: String) -> Dictionary:
+	if partner == null:
+		return {}
+	return partner.profiles().get(who, {})
+
+
+# Commands that came with this frame's keys (coop_net.gd), on both PCs at the same frame.
+# A friend may only change their own character, and only when the universe has cheats on.
+func coop_commands(_host_cmds: Array, client_cmds: Array) -> void:
+	if partner == null:
+		return
+	for c in client_cmds:
+		# The friend's own copy of their character: used only when this universe has none
+		# for them (the host's copy always wins) and when it looks possible.
+		if c is Dictionary and c.has("backup"):
+			if coop_friends().has(coop_friend_id()):
+				continue
+			var why := _implausible(c["backup"])
+			if why != "":
+				if coop.is_host():
+					_toast("%s's own copy of their character was not used (%s)." % [coop_name("client"), why], 4000)
+				continue
+			var into0: Dictionary = vm.globals if partner.leader == "client" else partner.profile
+			for k in ["gold", "weapon", "armor", "wstrength", "adef"]:
+				into0[k] = float(c["backup"][k])
+			var row0: Array = []
+			for v in c["backup"]["item"][0]:
+				row0.append(float(v))
+			if partner.leader == "client":
+				var g0 = vm.globals.get("item")
+				for i in 8:
+					g0 = vm._arr_set(g0, i, -1, row0[i])
+				vm.globals["item"] = g0
+			else:
+				partner.profile["item"] = CoopPartner.bag(row0)
+			if coop.is_host():
+				_toast("%s brought their character from their own save." % coop_name("client"), 4000)
+	if not cheats_allowed():
+		return
+	for c in client_cmds:
+		if not (c is Dictionary) or String(c.get("cheat", "")) != "self":
+			continue
+		var into: Dictionary = vm.globals if partner.leader == "client" else partner.profile
+		into["hp"] = clampf(float(c.get("hp", 20.0)), 1.0, 999.0)
+		into["gold"] = clampf(floorf(float(c.get("gold", 0.0))), 0.0, 99999.0)
+		var it = c.get("item", [])
+		if it is Array and it.size() == 8:
+			var row: Array = []
+			for v in it:
+				row.append(clampf(floorf(float(v)), 0.0, 99.0))
+			if partner.leader == "client":
+				var g = vm.globals.get("item")
+				for i in 8:
+					g = vm._arr_set(g, i, -1, row[i])
+				vm.globals["item"] = g
+			else:
+				partner.profile["item"] = CoopPartner.bag(row)
+		if coop.is_host():
+			debug_note("%s changed their own character (co-op)" % coop_name("client"))
+			_toast("%s used cheats on their own character." % coop_name("client"), 2500)
+
+
+# Why a friend's own copy of their character can't be right ("" when it can).
+func _implausible(b) -> String:
+	if not (b is Dictionary):
+		return "not readable"
+	for k in ["gold", "weapon", "armor", "wstrength", "adef", "item"]:
+		if not b.has(k):
+			return "incomplete"
+	var ids := {}
+	for it in debug._item_ids:
+		ids[float(it[0])] = true
+	if float(b["gold"]) < 0.0 or float(b["gold"]) > 9999.0:
+		return "gold out of range"
+	if not ids.has(float(b["weapon"])) or not ids.has(float(b["armor"])):
+		return "unknown weapon or armor"
+	if float(b["wstrength"]) < 0.0 or float(b["wstrength"]) > 99.0 or float(b["adef"]) < 0.0 or float(b["adef"]) > 99.0:
+		return "weapon or armor strength out of range"
+	var it2 = b["item"]
+	# 8 items, or the game's own 9 (the 9th is its scratch slot, scr_itemshift).
+	if not (it2 is Array) or it2.is_empty() or not (it2[0] is Array) or (it2[0] as Array).size() < 8 or (it2[0] as Array).size() > 9:
+		return "bad item list"
+	for i in 8:
+		if not ids.has(float(it2[0][i])):
+			return "unknown item"
+	return ""
+
+
+func coop_friend_id() -> String:
+	return String(coop.partner.get("id", "")) if coop.is_host() else String(player()["id"])
+
+
+func coop_friends() -> Dictionary:
+	if bi.save_dir == "":
+		return {}
+	var txt := FileAccess.get_file_as_string(bi.save_dir.path_join(FRIENDS_FILE))
+	if txt == "":
+		return {}
+	var d = JSON.parse_string(txt)
+	return d if d is Dictionary else {}
+
+
+func _on_save_written(path: String) -> void:
+	debug._save_written(path)
+	var fn := path.get_file()
+	if partner == null or not (fn == "file0" or fn == "file8"):
+		return
+	var pr: Dictionary = partner.profiles()
+	_patch_save(path, pr["host"])
+	if fn == "file0" and not coop.is_host():
+		# The friend keeps a copy of their own character beside the host's world (that
+		# folder is replaced on every join; this file isn't). See coop_commands "backup".
+		var bf := FileAccess.open(bi.save_dir.get_base_dir().path_join("me.json"), FileAccess.WRITE)
+		if bf != null:
+			var mine2: Dictionary = (pr["client"] as Dictionary).duplicate(true)
+			mine2.erase("hp")
+			bf.store_string(JSON.stringify({"profile": mine2, "saved": Time.get_datetime_string_from_system()}, " "))
+	if fn == "file0":
+		var all := coop_friends()
+		var mine: Dictionary = (pr["client"] as Dictionary).duplicate(true)
+		mine.erase("hp")
+		all[coop_friend_id()] = {"name": coop_name("client"), "profile": mine, "saved": Time.get_datetime_string_from_system()}
+		var f := FileAccess.open(bi.save_dir.path_join(FRIENDS_FILE), FileAccess.WRITE)
+		if f != null:
+			f.store_string(JSON.stringify(all, " "))
+
+
+func _patch_save(path: String, prof: Dictionary) -> void:
+	var lines := FileAccess.get_file_as_string(path).split("
+")
+	var num := func(v) -> String:
+		var r := float(v)
+		return str(int(r)) if r == floorf(r) and absf(r) < 1e15 else String.num(r)
+	var setl := func(i: int, v) -> void:
+		if i < lines.size():
+			lines[i] = num.call(v) + ("" if lines[i].ends_with("") else "")
+	for k in SAVE_LINES:
+		if prof.has(k):
+			setl.call(SAVE_LINES[k], prof[k])
+	var items = prof.get("item", [[]])
+	if items is Array and not items.is_empty() and items[0] is Array:
+		for i in mini(8, (items[0] as Array).size()):
+			setl.call(12 + i * 2, items[0][i])
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f != null:
+		f.store_string("
+".join(lines))
+
+
+# The game read its save (Continue, a reset, a game over): the friend's character comes back
+# from the same save, and the host leads again (file0 holds the host's things).
+func _on_save_read(path: String) -> void:
+	if path.get_file() == "file0":
+		_left_friends.clear()    # a load: everyone as saved
+	if partner == null or path.get_file() != "file0":
+		return
+	if partner.leader != "host":
+		partner.leader = "host"
+	var known: Dictionary = coop_friends().get(coop_friend_id(), {})
+	var pr: Dictionary = known.get("profile", {})
+	if pr.is_empty():
+		partner.new_profile(float(vm.globals.get("gold", 0.0)))    # never saved here: starts afresh
+	for k in pr:
+		partner.profile[k] = (pr[k] as Array).duplicate(true) if pr[k] is Array else pr[k]
+	if partner.profile.get("item") is Array and not (partner.profile["item"] as Array).is_empty():
+		partner.profile["item"] = CoopPartner.bag(partner.profile["item"][0])
+	partner.profile["hp"] = vm.globals.get("maxhp", 20.0)
+
+
+# "host" / "client" -> that player's name.
+func coop_name(p: String) -> String:
+	var me := String(player()["name"])
+	var them := String(coop.partner.get("name", "?"))
+	if coop.is_host():
+		return me if p == "host" else them
+	return them if p == "host" else me
+
+
+func _drop_partner() -> void:
+	if partner != null:
+		partner.battle.drop()
+	partner = null
+
+
+func coop_partner_left(who: String, who_id := "") -> void:
+	_toast("%s left the game." % who, 5000)
+	if partner != null:
+		partner.battle.drop()
+		# The host carries on as themself.
+		if partner.leader != "host":
+			var pl = vm.first_of(float(vm.obj_index.get("obj_mainchara", -1)), {"self": null, "other": null})
+			if pl != null:
+				partner.swap(pl)
+			else:
+				partner._swap_profiles()
+				partner.leader = "host"
+		# Back in this session (a dropped connection, say): as they were, not as last saved.
+		if who_id != "":
+			_left_friends[who_id] = partner.profile.duplicate(true)
+		partner = null
+
+
+func coop_host_lost(who: String) -> void:
+	_drop_partner()
+	for p in bi.players:
+		p["player"].stop()
+	universe = {}
+	front.back_to_title()
+	front._show(["Lost the connection to " + who + ".", "", "Your game there stopped."], "title")
+
+
+# The host's save files, for the friend's PC to run the same game (and nothing else of it).
+func coop_save_files() -> Dictionary:
+	var out := {}
+	if bi.save_dir == "" or not DirAccess.dir_exists_absolute(bi.save_dir):
+		return out
+	for fn in DirAccess.get_files_at(bi.save_dir):
+		out[fn] = FileAccess.get_file_as_bytes(bi.save_dir.path_join(fn))
+	return out
+
+
+# The friend's PC: the host's game, from the state it sent.
+func coop_join_start(m: Dictionary) -> void:
+	_reset_runtime()
+	vm.globals.clear()
+	var u: Dictionary = m.get("universe", {})
+	var host: Dictionary = m.get("host", {})
+	universe = {"id": String(u.get("id", "")), "name": String(u.get("name", "")), "cheats": bool(u.get("cheats", false)), "remote": true, "host": host}
+	# The world as the host has it, kept apart from this PC's own universes.
+	bi.save_dir = ProjectSettings.globalize_path("user://coop").path_join(String(host.get("id", "host"))).path_join(String(u.get("id", "world"))).path_join("world")
+	DirAccess.make_dir_recursive_absolute(bi.save_dir)
+	for fn in DirAccess.get_files_at(bi.save_dir):
+		DirAccess.remove_absolute(bi.save_dir.path_join(fn))
+	var files: Dictionary = m.get("files", {})
+	for fn in files:
+		if String(fn).get_file() != String(fn) or String(fn) == "":
+			continue    # names only, never paths
+		var f := FileAccess.open(bi.save_dir.path_join(fn), FileAccess.WRITE)
+		if f != null:
+			f.store_buffer(files[fn])
+			f.close()
+	bi.det_audio = true
+	game_clock = true
+	recording = null
+	bot = null
+	paused = false
+	rec.clear()
+	coop_apply_state(m["state"], int(m.get("ef", m["f"])))
+	screen = Screen.GAME
+	_toast("Joined %s's game." % host.get("name", "?"), 4000)
+	# This PC's own copy of its character in this universe goes with the first keys; the
+	# host uses it only if its universe has no record of this player.
+	var bkp: String = bi.save_dir.get_base_dir().path_join("me.json")
+	var bk = JSON.parse_string(FileAccess.get_file_as_string(bkp)) if FileAccess.file_exists(bkp) else null
+	if bk is Dictionary and bk.has("profile"):
+		coop.send_cmd({"backup": bk["profile"]})
+
+
+func coop_apply_state(state: Dictionary, f: int) -> void:
+	CoopState.unpack(self, state)
+	frames = f
+	bi.clock_ms = (frames - 1) * 1000.0 / 30.0
+	_game_room_seen = vm.room
+
+
+# The debug menu (F5): always in the Battle Engine and tests, in a universe only with cheats on.
+func cheats_allowed() -> bool:
+	return universe.is_empty() or bool(universe.get("cheats", false))
+
+
+func cheats_refused() -> void:
+	# A co-op friend's first try in a universe gets a word from Sans; after that, and for
+	# the host, just the note.
+	if coop.active() and not coop.is_host():
+		var uid := String(universe.get("id", ""))
+		var seen: PackedStringArray = String(settings.get("coop/sans_seen", "")).split(",", false)
+		if not seen.has(uid):
+			seen.append(uid)
+			settings["coop/sans_seen"] = ",".join(seen)
+			_save_settings()
+			sans.start()
+			return
+	_toast("Cheats are disabled in this universe.", 3000)
+
+
+# Undertale's own name for a room, as its save screen shows it (scr_roomname).
+func room_title(r: int) -> String:
+	if r == 0:
+		return _text_of("roomname_0")
+	if r < 0 or r >= vm.room_names.size():
+		return "?"
+	var rn: String = vm.room_names[r]
+	if rn.begins_with("room_"):
+		var t := _text_of("roomname_" + rn.substr(5))
+		if t != "":
+			return t
+	return rn
+
+
+func _text_of(key: String) -> String:
+	var m = bi.maps.get(int(text_map))
+	if m == null:
+		return ""
+	var t = m.get(key, null)
+	return String(t) if t != null else ""
+
+
+# --snaptest F K (with --game --press ...): plays to frame F, packs the game as co-op sends it,
+# plays K more frames, then unpacks and plays the same K frames again: every frame's
+# fingerprint must match.
+# --game --room R --coopsavetest: saves with a friend leading, then loads; both characters
+# must come back as they were (file0 the host's, coop_friends.json the friend's).
+func _coop_save_test() -> void:
+	while frames < 60:
+		_game_frame()
+	coop.partner = {"id": "friend-1", "name": "Greg"}
+	partner = CoopPartner.new()
+	partner.setup(self)
+	partner.new_profile(100.0)
+	var g: Dictionary = vm.globals
+	g["gold"] = 77.0
+	g["weapon"] = 13.0
+	g["item"] = vm._arr_set(g.get("item"), 0, -1, 1.0)
+	partner.profile["gold"] = 33.0
+	partner.profile["item"] = [[2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
+	# The friend leads (they walked up to the save point) and saves.
+	partner._swap_profiles()
+	partner.leader = "client"
+	var me = vm.first_of(float(vm.obj_index["obj_time"]), {"self": null, "other": null})
+	vm.call_script("scr_save", [], {"self": me, "other": me, "locals": {}, "args": []})
+	var lines := FileAccess.get_file_as_string(bi.save_dir.path_join("file0")).split("
+")
+	var ok := [true]
+	var check := func(what: String, got, want) -> void:
+		var gs := str(got).strip_edges()
+		var good: bool = gs == str(want) or (gs.is_valid_float() and str(want).is_valid_float() and float(gs) == float(want))
+		ok[0] = ok[0] and good
+		print("COOPSAVE %s %s: %s (want %s)" % ["ok  " if good else "FAIL", what, str(got).strip_edges(), want])
+	check.call("file0 gold is the host's", lines[10], 77)
+	check.call("file0 weapon is the host's", lines[28], 13)
+	check.call("file0 item 1 is the host's", lines[12], 1)
+	var fr: Dictionary = coop_friends().get(coop_friend_id(), {})
+	check.call("friend's gold saved", fr.get("profile", {}).get("gold", -1), 33)
+	# Things change, then the save is loaded again.
+	g["gold"] = 5.0
+	partner.profile["gold"] = 6.0
+	vm.call_script("scr_load", [], {"self": me, "other": me, "locals": {}, "args": []})
+	check.call("leader after load", partner.leader, "host")
+	check.call("host gold after load", g.get("gold"), 77)
+	check.call("friend gold after load", partner.profile.get("gold"), 33)
+	check.call("friend item after load", partner.profile["item"][0][0], 2)
+	print("COOPSAVE done, %s" % ("all ok" if ok[0] else "FAILED"))
+	partner = null
+	coop.partner = {}
+
+
+func _snap_test(at: int, more: int) -> void:
+	bi.det_audio = true
+	while frames < at:
+		_game_frame()
+	var pk: Dictionary = CoopState.pack(self)
+	if OS.get_cmdline_user_args().has("--snapsizes"):
+		var s0: Dictionary = bytes_to_var((pk["z"] as PackedByteArray).decompress(int(pk["n"]), FileAccess.COMPRESSION_ZSTD))
+		for key in s0:
+			print("SNAPSIZE %s %d KB" % [key, var_to_bytes(s0[key]).compress(FileAccess.COMPRESSION_ZSTD).size() / 1024])
+		for m in s0["maps"]:
+			print("SNAPSIZE map %s %d KB" % [m, var_to_bytes(s0["maps"][m]).size() / 1024])
+	var a: Array = []
+	for k in more:
+		_game_frame()
+		a.append(CoopState.checksum(self))
+	var room_a: String = vm.room_names[vm.room]
+	CoopState.unpack(self, pk)
+	var bad := -1
+	for k in more:
+		_game_frame()
+		if bad < 0 and CoopState.checksum(self) != a[k]:
+			bad = at + k + 1
+	print("SNAPTEST packed %d KB at frame %d, %d frames on in %s: %s" % [int(pk["z"].size() / 1024), at, more, room_a, "same" if bad < 0 else "DIFFERENT from frame %d" % bad])
+
+
+# --unitest (with --universesdir and --as): creates, lists, renames, turns cheats on, reads a
+# save and deletes, printing UNITEST lines.
+func _universe_test() -> void:
+	var fails := 0
+	var check := func(ok: bool, what: String) -> int:
+		print("UNITEST %s %s" % ["ok  " if ok else "FAIL", what])
+		return 0 if ok else 1
+	for u in Universes.list():
+		Universes.delete(u)
+	fails += check.call(Universes.list().is_empty(), "starts empty")
+	fails += check.call(Universes.default_name("Kyle") == "Kyle's Universe" and Universes.default_name("James") == "James' Universe", "default names")
+	var a: Dictionary = Universes.create("", false, player())
+	fails += check.call(String(a["name"]) == "", "empty name kept empty (the menu fills in the default)")
+	Universes.rename(a, "Kyle and Greg's Universe")
+	var b: Dictionary = Universes.create("Second", true, player())
+	var l: Array = Universes.list()
+	fails += check.call(l.size() == 2, "two universes listed")
+	fails += check.call(Universes.load_one(a["id"])["name"] == "Kyle and Greg's Universe", "rename saved")
+	fails += check.call(not bool(Universes.load_one(a["id"])["cheats"]) and bool(Universes.load_one(b["id"])["cheats"]), "cheats as created")
+	Universes.enable_cheats(a)
+	fails += check.call(bool(Universes.load_one(a["id"])["cheats"]), "cheats turned on later")
+	fails += check.call(Universes.load_one(a["id"])["players"].has(player()["id"]), "you are listed as a player")
+	# A save as Undertale writes it: name, LV, 8 numbers, gold, ..., room, time.
+	var lines: Array = ["Frisk", "4"]
+	for k in 8:
+		lines.append("0")
+	lines.append("57")
+	for k in 540:
+		lines.append("0")
+	lines.append(str(vm.consts.get("room_ruins7", 12.0)))
+	lines.append("29232")
+	var f := FileAccess.open(Universes.save_dir(a["id"]).path_join("file0"), FileAccess.WRITE)
+	f.store_string("\n".join(lines) + "\n")
+	f.close()
+	var sv: Dictionary = Universes.read_save(Universes.save_dir(a["id"]))
+	fails += check.call(sv.get("lv", 0) == 4 and sv.get("gold", 0) == 57 and Universes.time_text(sv.get("time", 0)) == "0:16:14", "save card: LV 4, 57G, 0:16:14")
+	fails += check.call(room_title(int(sv.get("room", 0))) == "Ruins - Leaf Pile", "room title: " + room_title(int(sv.get("room", 0))))
+	universe = a
+	fails += check.call(cheats_allowed(), "cheats allowed after turning on")
+	universe = Universes.load_one(b["id"])
+	universe["cheats"] = false
+	fails += check.call(not cheats_allowed(), "cheats refused when off")
+	universe = {}
+	fails += check.call(cheats_allowed(), "Battle Engine and tests: always allowed")
+	Universes.delete(a)
+	Universes.delete(b)
+	fails += check.call(Universes.list().is_empty(), "deleted")
+	# The solo save from before universes moves into one of its own (the old folder stays).
+	var old := Universes.ROOT.path_join("_legacy")
+	DirAccess.make_dir_recursive_absolute(old)
+	f = FileAccess.open(old.path_join("file0"), FileAccess.WRITE)
+	f.store_string("\n".join(lines) + "\n")
+	f.close()
+	Universes.LEGACY_SAVES = old
+	var m: Dictionary = Universes.migrate_legacy(player())
+	fails += check.call(not m.is_empty() and Universes.display_name(m) == Universes.default_name(player()["name"]) and Universes.read_save(Universes.save_dir(m["id"])).get("gold", 0) == 57 and FileAccess.file_exists(old.path_join("file0")), "old solo save copied into " + Universes.display_name(m))
+	Universes.delete(m)
+	DirAccess.remove_absolute(old.path_join("file0"))
+	DirAccess.remove_absolute(old)
+	print("UNITEST done, %d failed" % fails)
+
+
 func debug_note(what: String) -> void:
+	if not universe.is_empty() and not universe.get("debug_used", false):
+		universe["debug_used"] = true
+		Universes.save_one(universe)
 	debug_used.append("f%d %s: %s" % [frames, vm.room_names[vm.room] if vm.room >= 0 else "-", what])
 	vm.vlog("DEBUG " + what)
 
@@ -353,10 +1065,14 @@ func _reset_runtime() -> void:
 # Undertale itself, from its first room. Its save files (file0, undertale.ini...) live in
 # the engine's data folder (%APPDATA%/UltimateBattleEngine/undertale), never the real ones.
 func start_game() -> void:
+	coop.stop_listening()    # the title screen listens for LAN games; not while playing
+	_left_friends.clear()
+	var world: String = bi.save_dir     # a co-op friend's copy of the host's world stays in use
 	_reset_runtime()
 	vm.globals.clear()
 	var args := OS.get_cmdline_user_args()
-	bi.save_dir = ProjectSettings.globalize_path("user://undertale")
+	bi.save_dir = ProjectSettings.globalize_path("user://undertale") if universe.is_empty() else (world if universe.get("remote", false) else Universes.save_dir(String(universe["id"])))
+	DirAccess.make_dir_recursive_absolute(bi.save_dir)
 	var sd := args.find("--savedir")
 	if sd >= 0 and sd + 1 < args.size():
 		# Tests: a folder of their own, emptied first, so runs never see each other's saves.
@@ -367,7 +1083,12 @@ func start_game() -> void:
 	vm.game_started = false
 	var gs := args.find("--seed")
 	bi.rng.set_seed(int(args[gs + 1]) if gs >= 0 and gs + 1 < args.size() else (randi() & 0x7FFFFFFF))
-	game_clock = gs >= 0
+	if coop != null and coop.linked:
+		bi.rng.set_seed((coop.frame * 7919) & 0x7FFFFFFF)     # the same on both PCs
+	# Co-op hosts run on the frame clock and frame-counted sounds from the start, so a friend
+	# joining later runs exactly the same game.
+	game_clock = gs >= 0 or (coop != null and coop.active())
+	bi.det_audio = coop != null and coop.active()
 	bi.clock_ms = 0.0 if game_clock else -1.0
 	recording = null
 	paused = false
@@ -416,6 +1137,9 @@ func bot_shot(name: String) -> void:
 
 
 var _bot_shot_names := {}
+var _cam_at := Vector2.ZERO    # co-op: where this PC's picture is (display only)
+var _cam_room := -1
+var _left_friends := {}     # co-op host: friends who left this session, as they were (by id)
 
 
 func _game_auto_keys():
@@ -433,7 +1157,9 @@ func _game_auto_keys():
 			for f in args[i + 1].split(",", false):
 				_game_shots[int(f)] = args[i + 2]
 	if bot != null:
+		var bt := Time.get_ticks_usec()
 		var k: Array = bot.keys()
+		bot_us = Time.get_ticks_usec() - bt
 		if bot.done:
 			print("BOT %s at frame %d in %s" % ["FAILED" if bot.failed != "" else "FINISHED", frames, vm.room_names[vm.room]])
 			if DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--botexit"):
@@ -469,9 +1195,9 @@ func _game_jump() -> void:
 	if st >= 0 and st + 1 < OS.get_cmdline_user_args().size():
 		for kv in OS.get_cmdline_user_args()[st + 1].split(",", false):
 			var p := kv.split("=")
-			if p[0].begins_with("flag."):
-				var fl = vm.globals.get("flag")
-				vm.globals["flag"] = vm._arr_set(fl, int(p[0].substr(5)), -1, float(p[1]))
+			if p[0].contains("."):
+				var nm := p[0].get_slice(".", 0)
+				vm.globals[nm] = vm._arr_set(vm.globals.get(nm), int(p[0].get_slice(".", 1)), -1, float(p[1]))
 			else:
 				vm.globals[p[0]] = float(p[1])
 	var r := _jump_to
@@ -481,13 +1207,15 @@ func _game_jump() -> void:
 
 func _game_frame() -> void:
 	var tl := Time.get_ticks_usec()
+	var prof0 = vm.prof.duplicate() if vm.prof != null and OS.get_cmdline_user_args().has("--hitchlog") else null
 	frames += 1
 	if game_clock:
 		bi.clock_ms = (frames - 1) * 1000.0 / 30.0
-	var gk = _game_auto_keys()
+	var gk = coop_vm_keys if coop_vm_keys != null else _game_auto_keys()
 	if gk == null and debug != null and debug.open:
 		gk = []     # the debug menu has the keyboard
 	keys.poll(gk)
+	_mp_frame_start()
 	vm.step_frame(keys)
 	vm.room_frame_end()
 	var guard := 0
@@ -498,6 +1226,19 @@ func _game_frame() -> void:
 		vm.load_room(r)
 		vm.step_frame(keys)
 		vm.room_frame_end()
+	if mp != null:
+		mp.after_step()
+		if _mpcheck != null:
+			_mpcheck.frame(frames)
+	var ml := OS.get_cmdline_user_args().find("--mplog")
+	if ml >= 0 and frames % int(OS.get_cmdline_user_args()[ml + 1]) == 0:
+		print("MP f=%d %s worst=%dus avg=%dus | %s" % [frames, vm.room_names[vm.room], _mp_worst, _mp_sum / maxi(1, _mp_n), mp.log_line() if mp != null else "solo"])
+		_mp_worst = 0
+		_mp_sum = 0
+		_mp_n = 0
+	if partner != null:
+		partner.battle.after_step()
+		partner.battle.after_draw_step()
 	if _jump_to >= 0 and vm.room != int(vm.consts.get(String(vm.meta["room_order"][0]), 0.0)):
 		_game_jump()
 	if vm.room != _game_room_seen:
@@ -512,6 +1253,9 @@ func _game_frame() -> void:
 		_end_game()
 		return
 	if _bot_exit or ((DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--gameshot") or bot != null) and frames >= frame_cap):
+		if coop.active():
+			print("COOP %s friend's character: %s" % [coop.role, coop_character("client")])
+			print("COOP %s stopped at frame %d: %d frames together, %d mismatches, %d resyncs, state %d, leader %s after %d swaps, room %s" % [coop.role, frames, coop.frames_run, coop.mismatches, coop.resyncs, CoopState.checksum(self), partner.leader if partner != null else "-", partner.swaps if partner != null else 0, vm.room_names[vm.room]])
 		var pl = vm.first_of(float(vm.obj_index.get("obj_mainchara", -1)), {"self": null, "other": null})
 		print("GAME stopped at frame %d in %s, %d instances, player %s, plot %s" % [frames, vm.room_names[vm.room], vm.instances.size(), ("%s,%s" % [pl.v["x"], pl.v["y"]]) if pl != null else "-", bi.gm_string(vm.globals.get("plot", 0.0))])
 		if OS.get_cmdline_user_args().has("--dumpinst"):
@@ -523,10 +1267,57 @@ func _game_frame() -> void:
 				print("  %d %s (%s,%s) depth=%s vis=%s %s" % [ins.id, vm.obj_names[ins.obj], ins.v["x"], ins.v["y"], ins.v["depth"], ins.v["visible"], " ".join(al)])
 			print("  globals plot=%s interact=%s" % [vm.globals.get("plot"), vm.globals.get("interact")])
 		screen = Screen.RESULT
+		if coop.active():
+			# Let the other PC finish its last frames before this one goes.
+			get_tree().create_timer(2.0).timeout.connect(get_tree().quit)
+			return
 		get_tree().quit()
 		return
 	rec.clear()
 	bi.canvas = rec
+	# Co-op: when this PC's player isn't the game's own one, the picture follows this PC's
+	# player instead (only while drawing; the game's view is put back afterwards).
+	var cam_keep = null
+	var show_partner: bool = partner != null and partner.visible()
+	if show_partner and partner.leader != coop.role and bi.views_on:
+		# While text, a menu or a cutscene is up, the picture is the game's own view: the
+		# game puts text boxes where its view is, so a different one would split box and text.
+		# Afterwards it slides back to this PC's player.
+		var real := Vector2(float(bi.view_xview[0]), float(bi.view_yview[0]))
+		if float(vm.globals.get("interact", 0.0)) != 0.0 or _cam_room != vm.room:
+			_cam_at = real
+			_cam_room = vm.room
+		else:
+			cam_keep = [bi.view_xview[0], bi.view_yview[0]]
+			var cw := float(bi.view_wview[0])
+			var ch := float(bi.view_hview[0])
+			var want := Vector2(clampf(roundf(partner.x - cw / 2.0 + 10.0), 0.0, maxf(0.0, float(vm.room_width) - cw)),
+				clampf(roundf(partner.y - ch / 2.0 + 10.0), 0.0, maxf(0.0, float(vm.room_height) - ch)))
+			var d := want - _cam_at
+			var step := maxf(4.0, d.length() * 0.2)
+			_cam_at = want if d.length() <= step else (_cam_at + d.normalized() * step).round()
+			bi.view_xview[0] = _cam_at.x
+			bi.view_yview[0] = _cam_at.y
+	elif bi.views_on:
+		_cam_at = Vector2(float(bi.view_xview[0]), float(bi.view_yview[0]))
+		_cam_room = vm.room
+	if show_partner:
+		vm.draw_hook_depth = partner.depth()
+		vm.draw_hook = partner.draw
+		var me := String(player()["name"])
+		var them := String(coop.partner.get("name", "?"))
+		vm.draw_end_hook = partner.draw_names.bind(me if coop.is_host() else them, them if coop.is_host() else me)
+	# Co-op battle: this PC's own HP at the bottom, the teammate's in the corner.
+	var fight: bool = partner != null and partner.battle.active
+	var hp_keep = null
+	if fight:
+		vm.draw_end_hook = partner.battle.draw.bind(coop.role)
+		if partner.leader != coop.role:
+			hp_keep = vm.globals.get("hp", 0.0)
+			vm.globals["hp"] = partner.profile.get("hp", 0.0)
+			partner.battle.leader_hp = hp_keep
+	if coop.test_log and frames % 100 == 0 and coop.linked:
+		print("COOP draw f=%d partner=%s visible=%s leader=%s at %s,%s interact=%s" % [frames, partner != null, show_partner, partner.leader if partner != null else "-", partner.x if partner != null else 0, partner.y if partner != null else 0, vm.globals.get("interact")])
 	if bi.views_on:
 		rec.view = Vector2(float(bi.view_xview[0]), float(bi.view_yview[0]))
 		var wv := maxf(1.0, float(bi.view_wview[0]))
@@ -536,10 +1327,41 @@ func _game_frame() -> void:
 		rec.view = Vector2.ZERO
 		rec.view_scale = Vector2.ONE
 	vm.draw_frame()
+	if frames == 150 and OS.get_cmdline_user_args().has("--cheatpanel") and coop.active():    # testing: as if F5
+		debug.toggle()
+	if frames == 200 and OS.get_cmdline_user_args().has("--cheatsend") and coop.active() and not coop.is_host():    # testing
+		coop.send_cmd({"cheat": "self", "hp": 99.0, "gold": 500.0, "item": [3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]})
+	if frames == 200 and OS.get_cmdline_user_args().has("--sanstest"):    # testing: as if F5 was pressed
+		cheats_refused()
+	sans.draw()
+	if show_partner or fight:
+		vm.draw_hook = Callable()
+		vm.draw_end_hook = Callable()
+	if hp_keep != null:
+		vm.globals["hp"] = hp_keep
+		partner.battle.leader_hp = null
+	if cam_keep != null:
+		bi.view_xview[0] = cam_keep[0]
+		bi.view_yview[0] = cam_keep[1]
 	bi.canvas = null
+	_world_test_frame()
 	if OS.get_cmdline_user_args().has("--viewlog") and frames % 50 == 0:
 		print("VIEW f=%d on=%s view=%s scale=%s port=%s" % [frames, bi.views_on, rec.view, rec.view_scale, bi.room_arr["view_wport"][0]])
 	last_logic_us = Time.get_ticks_usec() - tl
+	_mp_worst = maxi(_mp_worst, last_logic_us - bot_us)
+	_mp_sum += last_logic_us - bot_us
+	_mp_n += 1
+	if last_logic_us > 40000 and OS.get_cmdline_user_args().has("--hitchlog"):
+		print("HITCH f=%d %dus (bot %dus) in %s, %d instances, %d compiled" % [frames, last_logic_us, bot_us, vm.room_names[vm.room], vm.instances.size(), vm.fast_cache.size()])
+		if prof0 != null:
+			var d: Array = []
+			for k in vm.prof:
+				var dv = vm.prof[k] - prof0.get(k, 0) if vm.prof[k] is int else 0
+				if dv > 3000:
+					d.append([dv, k])
+			d.sort()
+			d.reverse()
+			print("HITCH   top: %s" % str(d.slice(0, 8)))
 	if OS.get_cmdline_user_args().has("--watch") and frames % 10 == 0:
 		var wl := "WATCH f=%d %s plot=%s interact=%s" % [frames, vm.room_names[vm.room], bi.gm_string(vm.globals.get("plot", 0.0)), bi.gm_string(vm.globals.get("interact", 0.0))]
 		for ins in vm.instances:
@@ -550,6 +1372,14 @@ func _game_frame() -> void:
 		print(wl)
 	if debug != null:
 		debug.test_hooks(frames)
+	# --coopdesync F (tests): nudge the player on this PC only, so the PCs drift apart and
+	# the host's state has to put it right.
+	var dz := OS.get_cmdline_user_args().find("--coopdesync")
+	if dz >= 0 and frames == int(OS.get_cmdline_user_args()[dz + 1]):
+		var pc = vm.first_of(float(vm.obj_index.get("obj_mainchara", -1)), {"self": null, "other": null})
+		if pc != null:
+			pc.v["x"] = float(pc.v["x"]) + 7.0
+			print("COOP test: nudged the player at frame %d" % frames)
 	if not _game_shots.is_empty():
 		_game_shot_check()
 	if OS.get_cmdline_user_args().has("--smoothprobe"):
@@ -624,7 +1454,10 @@ func _end_game() -> void:
 	for p in bi.players:
 		p["player"].stop()
 	vm.vlog("GAME end")
-	screen = Screen.LIST
+	coop.stop()
+	_drop_partner()
+	universe = {}
+	front.back_to_title()
 
 
 func start_battle(index: int) -> void:
@@ -735,6 +1568,9 @@ func _physics_process(_delta: float) -> void:
 	match screen:
 		Screen.LIST:
 			_list_input()
+		Screen.FRONT:
+			coop.service()
+			front.tick()
 		Screen.RESULT:
 			_poll_menu_keys()
 			if _menu_pressed(90) or _menu_pressed(13) or _menu_pressed(88):
@@ -751,6 +1587,16 @@ func _physics_process(_delta: float) -> void:
 				n = int(_speed_acc)
 				_speed_acc -= n
 			step_once = false
+			# Co-op: frames run in lockstep with the other PC (coop_net.gd).
+			if screen == Screen.GAME and coop != null and coop.active():
+				# A friend leaves by holding Esc for a second (the game's own Esc is the host's).
+				if coop.is_client() and coop.linked:
+					_leave_hold = _leave_hold + 1 if Input.is_physical_key_pressed(KEY_ESCAPE) else 0
+					if _leave_hold == 30:
+						coop_leave()
+						return
+				if coop.tick():
+					return
 			for k in mini(n, 8):
 				if debug != null:
 					debug.before_frame()
@@ -977,8 +1823,11 @@ func _apply_display(resize := false) -> void:
 
 func _list_input() -> void:
 	_poll_menu_keys()
-	if _menu_pressed(27):
-		get_tree().quit()
+	if _menu_pressed(27) and not setup_open:
+		if front != null and menushot == "":
+			front.back_to_title()
+		else:
+			get_tree().quit()
 		return
 	if setup_open:
 		if _menu_pressed(38):
@@ -992,9 +1841,6 @@ func _list_input() -> void:
 			_setup_change(setup_row, d)
 		if _menu_pressed(88) or _menu_pressed(67):
 			setup_open = false
-		return
-	if _menu_pressed(71):
-		start_game()
 		return
 	if _menu_pressed(67):
 		setup_open = true
@@ -1024,6 +1870,13 @@ func _list_input() -> void:
 		start_battle(list[sel])
 
 func _unhandled_input(event: InputEvent) -> void:
+	if screen == Screen.FRONT and front != null:
+		if event is InputEventMouse:
+			front.mouse(event, get_local_mouse_position())
+			return
+		if event is InputEventKey and front.key_event(event):
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventMouse:
 		if debug != null and debug.open:
 			# Clicks on the game while the debug menu is open pick objects (Inspect) or move
@@ -1048,6 +1901,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_F9:
 			overlay = not overlay
 			_save_settings()
+		elif (event.keycode == KEY_F10 or event.keycode == KEY_F11) and screen == Screen.GAME and coop.is_client() and coop.linked:
+			_toast("Only %s (the host) can pause." % coop.partner.get("name", "the host"), 2500)
 		elif event.keycode == KEY_F10 and (screen == Screen.BATTLE or screen == Screen.GAME):
 			paused = not paused
 			_toast("Paused (F11: one frame, F10: resume)" if paused else "Resumed")
@@ -1061,6 +1916,8 @@ func _unhandled_input(event: InputEvent) -> void:
 # ---------------------------------------------------------------- drawing
 
 var _menushot_wait := 0
+var _menushot_ms := 0
+var _menushot_done := false
 
 
 var _hitch_t := 0
@@ -1082,9 +1939,14 @@ func _process(_delta: float) -> void:
 	# Compile the game's translated code in the background while the menus are idle.
 	if vm != null and (screen == Screen.LIST or screen == Screen.RESULT):
 		vm.warm_step(6000)
-	if menushot != "" and screen == Screen.LIST:
+	if menushot != "" and (screen == Screen.LIST or screen == Screen.FRONT):
 		_menushot_wait += 1
-		if _menushot_wait == 10:
+		# The title screen and Join wait 3 s, so games on the network have been heard.
+		if _menushot_ms == 0:
+			_menushot_ms = Time.get_ticks_msec()
+		var due: bool = (Time.get_ticks_msec() - _menushot_ms >= 3000) if screen == Screen.FRONT else _menushot_wait >= 10
+		if due and not _menushot_done:
+			_menushot_done = true
 			await RenderingServer.frame_post_draw
 			get_viewport().get_texture().get_image().save_png(menushot)
 			get_tree().quit()
@@ -1106,6 +1968,8 @@ func _draw() -> void:
 			draw_string(ThemeDB.fallback_font, Vector2(20, 40), error, HORIZONTAL_ALIGNMENT_LEFT, 600, 14)
 		Screen.LIST:
 			_draw_list()
+		Screen.FRONT:
+			front.draw()
 		Screen.RESULT:
 			_text(40, 200, result_text, 65535)
 			_text(40, 260, "[Z] Back to the list", 8421504, "fnt_maintext")
@@ -1119,10 +1983,29 @@ func _draw() -> void:
 				_draw_overlay()
 			elif paused or playback != null:
 				_small(8, 14, ("PAUSED  " if paused else "") + ("REPLAY" if playback != null else ""), Color(1, 1, 0))
+			if coop.active() and coop.linked:
+				var wt: String = coop.waiting_text()
+				if coop.host_paused and coop.is_client():
+					wt = "Paused by " + String(coop.partner.get("name", "the host"))
+				if wt != "":
+					var ww := ThemeDB.fallback_font.get_string_size(wt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+					draw_rect(Rect2(316 - ww / 2, 8, ww + 8, 20), Color(0, 0, 0, 0.8))
+					_small(320 - ww / 2, 22, wt, Color(1, 1, 0))
 	if toast != "" and Time.get_ticks_msec() < toast_until:
-		var w := ThemeDB.fallback_font.get_string_size(toast, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
-		draw_rect(Rect2(316 - w / 2, 452, w + 8, 20), Color(0, 0, 0, 0.8))
-		_small(320 - w / 2, 466, toast, Color(1, 1, 0.6))
+		# Out of the game's way: at the top in battle (the buttons are at the bottom), and in
+		# the overworld it waits while text or a menu is up (boxes are drawn at the bottom).
+		var ty := 452.0
+		var hold := false
+		if screen == Screen.GAME:
+			if in_battle_room():
+				ty = 32.0
+			elif float(vm.globals.get("interact", 0.0)) != 0.0:
+				hold = true
+				toast_until = maxi(toast_until, Time.get_ticks_msec() + 1500)
+		if not hold:
+			var w := ThemeDB.fallback_font.get_string_size(toast, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+			draw_rect(Rect2(316 - w / 2, ty, w + 8, 20), Color(0, 0, 0, 0.8))
+			_small(320 - w / 2, ty + 14, toast, Color(1, 1, 0.6))
 
 
 var hits: Array = []        # [Rect2, kind, value] clickable areas of the current menu screen
@@ -1194,7 +2077,7 @@ func _draw_list() -> void:
 		_text(600, 112 + (rows - 1) * 34, "v" if scroll + rows < list.size() else "", 8421504, "fnt_maintext")
 	if vm.warm_progress() < 1.0:
 		_text(24, 428, "Preparing battles... %d%%" % int(vm.warm_progress() * 100.0), 8421504, "fnt_maintext")
-	_text(24, 450, "[ARROWS/MOUSE] Choose  [Z/CLICK] Fight  [C] Setup  [G] Play the game  [ESC] Quit", 8421504, "fnt_maintext")
+	_text(24, 450, "[ARROWS/MOUSE] Choose  [Z/CLICK] Fight  [C] Setup  [ESC] Title screen", 8421504, "fnt_maintext")
 	var mod_n: int = mods.get("mods", []).size()
 	var mod_p: int = mods.get("problems", []).size()
 	if mod_n > 0 or mod_p > 0:
@@ -1891,3 +2774,118 @@ func _print_report(tag: String) -> void:
 	for l in vm.log_lines:
 		if l.begins_with("WARN"):
 			print("  ", l)
+
+
+# ---------------------------------------------------------------- worlds (tests)
+
+# --worldtest ROOM (tests, docs/MULTIPLAYER.md stage 1): a second world runs ROOM alongside
+# the game, stepped and drawn every frame with private globals and parked rooms, tapping Z. The game's own
+# world must not notice: --worldhash N prints a checksum of its state every N frames, which
+# has to match a run without the second world.
+var worlds: Array = []
+var _wt = null
+var _wt_rec = null
+
+
+func _world_test_frame() -> void:
+	var args := OS.get_cmdline_user_args()
+	var wi := args.find("--worldtest")
+	var wa := args.find("--worldat")
+	if wi >= 0 and _wt == null and frames == (int(args[wa + 1]) if wa >= 0 else 5):
+		var r := int(vm.consts.get(String(args[wi + 1]), -1.0))
+		if r < 0:
+			print("WORLDTEST no room %s" % args[wi + 1])
+		else:
+			worlds = [World.from_current(vm)]
+			_wt = World.empty(vm, 1, 4242)
+			_wt.private = World.private_copy(vm)
+			var ws := args.find("--worldset")
+			if ws >= 0:
+				for kv in String(args[ws + 1]).split(","):
+					_wt.private["vm.globals"][kv.get_slice("=", 0)] = float(kv.get_slice("=", 1))
+			_wt.bi_state["keys"] = Keys.new()
+			_wt_rec = Recorder.new()
+			worlds.append(_wt)
+			_wt.use(vm, worlds[0])
+			vm.load_room(r)
+			print("WORLDTEST world 1 in %s, %d instances" % [vm.room_names[vm.room], vm.instances.size()])
+			worlds[0].use(vm, _wt)
+	if _wt != null:
+		var w0 = worlds[0]
+		_wt.use(vm, w0)
+		var t0 := Time.get_ticks_usec()
+		bi.keys.poll([90] if frames % 20 == 0 else [])    # taps Z, so a battle there plays on
+		# Undertale reads Z/X/C through obj_time, which lives in the game's own world.
+		vm.run_source("for (var i = 0; i <= 2; i++) { var ns = keyboard_check(ord(string_char_at(\"ZXC\", i + 1))); global.control_pressed[i] = !global.control_state[i] && ns; global.control_state[i] = ns; }")
+		vm.step_frame(bi.keys)
+		vm.room_frame_end()
+		var guard := 0
+		while vm.pending_room != -1 and guard < 4:
+			guard += 1
+			var r: int = vm.pending_room
+			vm.pending_room = -1
+			vm.load_room(r)
+			vm.step_frame(bi.keys)
+			vm.room_frame_end()
+		_wt_rec.clear()
+		bi.canvas = _wt_rec
+		vm.draw_frame()
+		bi.canvas = null
+		if frames % 300 == 0:
+			print("WORLDTEST f=%d world 1 in %s, %d instances, %d draw ops, %d us" % [frames, vm.room_names[vm.room], vm.instances.size(), _wt_rec.ops.size(), Time.get_ticks_usec() - t0])
+		w0.use(vm, _wt)
+	var hi := args.find("--worldhash")
+	if hi >= 0 and frames % int(args[hi + 1]) == 0:
+		print("WHASH f=%d room=%s %d" % [frames, vm.room_names[vm.room], world_hash()])
+	var di := args.find("--worlddump")
+	if di >= 0 and frames == int(args[di + 1]):
+		print("WDUMP order %s" % str(vm.globals.keys()))
+		for k in vm.globals:
+			print("WDUMP g %s=%s" % [k, str(vm.globals[k])])
+		for i in vm.instances:
+			print("WDUMP i %d %s %s %s" % [i.id, vm.obj_names[i.obj], str(i.v), str(i.alarm)])
+
+
+# Checksum of the active world's instances and the globals.
+func world_hash() -> int:
+	var h := hash(str(vm.globals))
+	for i in vm.instances:
+		h = hash([h, i.id, i.obj, str(i.v), str(i.alarm)])
+	return h
+
+
+# ---------------------------------------------------------------- players (stage 2)
+
+# --players N (tests, docs/MULTIPLAYER.md stage 2): N players in this one game, the extra
+# ones driven by --pfeed. Player 1 is this PC's keyboard (or the bot).
+var mp = null
+var _mpcheck = null    # mp_tests.gd, with --mpcheck
+var _mp_worst := 0     # slowest game frame (logic and drawing, not the test bot) since the last --mplog line
+var _mp_sum := 0
+var _mp_n := 0
+var bot_us := 0        # time the test bot took to choose this frame's keys (not part of the game)
+
+
+func _mp_frame_start() -> void:
+	var args := OS.get_cmdline_user_args()
+	if mp == null:
+		var pi := args.find("--players")
+		if pi < 0 or int(args[pi + 1]) < 2:
+			return
+		mp = MpPlayers.new()
+		var names: Array = []
+		for k in int(args[pi + 1]):
+			names.append(["Kyle", "Greg", "Ann", "Sam"][k % 4])
+		mp.setup(self, names)
+		var fi := args.find("--pfeed")
+		if fi >= 0:
+			for part in String(args[fi + 1]).split(";", false):
+				var k := int(part.get_slice("=", 0)) - 1
+				if k > 0 and k < mp.count():
+					mp.list[k].feed = mp.make_feed(part.get_slice("=", 1), k)
+		print("MP %d players" % mp.count())
+		var ci := args.find("--mpcheck")
+		if ci >= 0:
+			_mpcheck = load("res://mp_tests.gd").new()
+			_mpcheck.setup(self, String(args[ci + 1]))
+	mp.before_step()

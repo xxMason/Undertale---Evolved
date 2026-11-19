@@ -92,6 +92,44 @@ var pending_room := -1
 # draw_hook_depth (the trace recorder's place in the real game's draw order).
 var draw_hook := Callable()
 var draw_hook_depth := -100000.0
+# Co-op battles: a second SOUL (`scoped`) runs its events with the other player's keys and
+# stats. scope_enter/scope_exit swap them in and out around any event whose self or other
+# is that SOUL; while inside, reading obj_heart.x gives that SOUL. inst_keys: instance id ->
+# keys object for its Keyboard / Key Press / Key Release events.
+var scoped = null
+var in_scope := false
+var scope_enter := Callable()
+var scope_exit := Callable()
+var inst_keys := {}
+# While dodging (set by coop_battle.gd): attacks that read "the SOUL" (obj_heart.x, ...) each
+# get one of the two, by the id of the instance doing it, so both players get aimed at.
+# aim_skip: objects that always mean the game's own SOUL (the battle's own bookkeeping).
+var aim_split := false
+var aim_skip := {}
+var _src_cache := {}
+var draw_end_hook := Callable()     # after the room's drawing, before Draw GUI (co-op name tags)
+# Players (docs/MULTIPLAYER.md stage 2, mp_players.gd). With owners_on, every instance may
+# belong to a player (Inst.owner). An event of a player's instance, or one whose `other` is
+# a player's instance (a door touched by them), runs in that player's context: owner_switch
+# swaps their own globals in (input, HP, items, text...). Instances created in a player's
+# context belong to them; an object a player talks to (scr_interact) is theirs until its
+# talk ends. In a player's context, the objects in player_insts (their character) mean
+# their own instance. ctx_owner is the player whose context is running, -1 for the world.
+var owners_on := false
+var ctx_owner := -1
+var owner_switch := Callable()
+var player_insts: Array = []     # player index -> {object index: Inst}
+var claimed: Array = []          # instances claimed through scr_interact
+# Private objects (text boxes, faces): each player only sees their own and the world's;
+# the world sees its own and the primary player's (as in the one-player game).
+var private_objs := {}           # object index -> true (children included)
+var primary_owner := 0
+# Per-player objects (the overworld menu): one instance in the room, but its events run once
+# for each player in multi_players, in their context and with their own copy of its
+# variables (Inst.pv), so several players can have it open at once.
+var multi_objs := {}             # object index -> true
+var multi_players: Array = []    # player indices
+var _in_multi = null
 var game_end_requested := false
 var game_restart_requested := false
 var ret_val = 0.0
@@ -109,6 +147,8 @@ var cur_event_sub := -1
 class Inst:
 	var id := 0
 	var obj := 0
+	var owner := -1       # player index (see owners_on), -1 for none
+	var pv = null         # per-player objects: player index -> their copy of v
 	var v := {}
 	var alarm: Array = []
 	var dead := false
@@ -449,6 +489,9 @@ func call_script(name: String, args: Array, ctx: Dictionary):
 	var code: String = script_code.get(name, "")
 	if code == "":
 		return null
+	if owners_on and ctx_owner >= 0 and name == "scr_interact" and ctx["self"] is Inst and ctx["self"].owner < 0:
+		ctx["self"].owner = ctx_owner
+		claimed.append(ctx["self"])
 	if use_fast:
 		var f = get_fast(code)
 		if f != null:
@@ -528,6 +571,7 @@ func instance_create(x: float, y: float, obj: int, run_create := true) -> Inst:
 	v["path_index"] = -1.0
 	v["path_position"] = 0.0
 	v["path_speed"] = 0.0
+	inst.owner = ctx_owner if owners_on else -1
 	_insert_by_depth(inst)
 	by_id[inst.id] = inst
 	inst_version += 1
@@ -656,6 +700,21 @@ func instance_destroy(inst: Inst) -> void:
 	perform_event(inst, EV_DESTROY, 0, null)
 
 
+# Keyboard events of an instance that has its own keys (the co-op partner's SOUL).
+func _own_keys(i: Inst, k) -> void:
+	for code in k.held_list():
+		if not i.dead and pending_room == -1:
+			perform_event(i, EV_KEYBOARD, code, null)
+	if not k.held_list().is_empty() and not i.dead:
+		perform_event(i, EV_KEYBOARD, 1, null)
+	for code in k.pressed_list():
+		if not i.dead and pending_room == -1:
+			perform_event(i, EV_KEYPRESS, code, null)
+	for code in k.released_list():
+		if not i.dead and pending_room == -1:
+			perform_event(i, EV_KEYRELEASE, code, null)
+
+
 func purge_dead() -> void:
 	var keep: Array = []
 	for i in instances:
@@ -693,6 +752,18 @@ func resolve(target, ctx: Dictionary) -> Array:
 	if n >= 100000:
 		var inst = by_id.get(n)
 		return [] if inst == null or inst.dead else [inst]
+	if owners_on:
+		if ctx_owner >= 0:
+			var own = player_insts[ctx_owner].get(n)
+			if own != null:
+				return [] if own.dead else [own]
+		if private_objs.has(n):
+			var me := ctx_owner if ctx_owner >= 0 else primary_owner
+			var mine: Array = []
+			for i in instances:
+				if not i.dead and is_child_of(i.obj, n) and (i.owner < 0 or i.owner == me):
+					mine.append(i)
+			return mine
 	# Cached per object until an instance is created, destroyed or changes object.
 	var hit = _resolve_cache.get(n)
 	if hit != null and hit[0] == inst_version:
@@ -711,11 +782,36 @@ func first_of(target, ctx: Dictionary):
 	var r := resolve(target, ctx)
 	if r.is_empty():
 		return null
+	if scoped != null and r.size() > 1 and r.has(scoped):
+		if in_scope:
+			return scoped
+		if aim_split and cur_self != null and cur_self is Inst and int(cur_self.id) % 2 == 1 and not aim_skip.has(int(cur_self.obj)):
+			return scoped
+		var b2 = null
+		for i in r:
+			if i != scoped and (b2 == null or i.id < b2.id):
+				b2 = i
+		return b2
 	var best = r[0]
 	for i in r:
 		if i.id < best.id:
 			best = i
 	return best
+
+
+# Runs a piece of GML source (compiled once) as `inst`; co-op uses it for the Revive turn.
+func run_source(src: String, inst = null):
+	var tree = _src_cache.get(src)
+	if tree == null:
+		tree = compiler.compile(src)
+		if compiler.error != "":
+			push_error("run_source: " + compiler.error)
+			tree = []
+		_src_cache[src] = tree
+	var ctx := {"self": inst, "other": inst, "locals": {}, "args": []}
+	ret_val = 0.0
+	_exec(tree, ctx)
+	ret_val = 0.0
 
 
 # ---------------------------------------------------------------- events
@@ -771,7 +867,36 @@ func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, oth
 	cur_event_obj = def_obj
 	cur_event_type = type
 	cur_event_sub = sub
-	run_code(code, inst, other if other != null else inst)
+	var enter: bool = scoped != null and not in_scope and (inst == scoped or (other != null and other == scoped))
+	if enter:
+		in_scope = true
+		scope_enter.call()
+	# A player's instance (or one touched by a player's) runs in that player's context; an
+	# unowned one keeps the context of whatever ran it (the world's, for the frame's passes).
+	var oc := ctx_owner
+	if owners_on and inst.owner < 0 and multi_objs.has(inst.obj) and _in_multi != inst:
+		_run_multi(inst, code, other)
+	else:
+		var busy0 = null
+		if owners_on:
+			var o := inst.owner
+			if o < 0 and other is Inst:
+				o = other.owner
+			if o >= 0 and o != oc:
+				owner_switch.call(o)
+			if inst.owner < 0 and ctx_owner >= 0:
+				busy0 = globals.get("interact", 0.0)
+		run_code(code, inst, other if other != null else inst)
+		# A world object that just made a player busy (a hole they fell in, a trigger) is
+		# theirs until that is over: its alarms and steps then act on that player.
+		if busy0 != null and inst.owner < 0 and not inst.dead and float(busy0) == 0.0 and float(globals.get("interact", 0.0)) != 0.0:
+			inst.owner = ctx_owner
+			claimed.append(inst)
+		if owners_on and ctx_owner != oc:
+			owner_switch.call(oc)
+	if enter:
+		scope_exit.call()
+		in_scope = false
 	cur_self = s_self
 	cur_other = s_other
 	cur_event_obj = s_obj
@@ -779,6 +904,31 @@ func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, oth
 	cur_event_sub = s_s
 	if prof != null:
 		prof["ev:" + code] = prof.get("ev:" + code, 0) + Time.get_ticks_usec() - pt
+
+
+# A per-player object's event, once for each player with their own variables. Afterwards
+# the instance shows the primary player's copy.
+func _run_multi(inst: Inst, code: String, other) -> void:
+	var oc := ctx_owner
+	var keep = _in_multi
+	_in_multi = inst
+	if inst.pv == null:
+		inst.pv = {}
+	for p in multi_players:
+		if inst.dead:
+			break
+		if not inst.pv.has(p):
+			inst.pv[p] = inst.v.duplicate(true) if p != primary_owner else inst.v
+		inst.v = inst.pv[p]
+		if p != ctx_owner:
+			owner_switch.call(p)
+		run_code(code, inst, other if other != null else inst)
+		inst.pv[p] = inst.v
+	if inst.pv.has(primary_owner):
+		inst.v = inst.pv[primary_owner]
+	if ctx_owner != oc:
+		owner_switch.call(oc)
+	_in_multi = keep
 
 
 func event_inherited(ctx: Dictionary) -> void:
@@ -1352,9 +1502,14 @@ func step_frame(keys) -> void:
 	var released: Array = keys.released_list()
 	var fired := false
 	for i in list:
-		if not fired and held.is_empty() and pressed.is_empty() and released.is_empty():
-			break
 		if i.dead or pending_room != -1:
+			continue
+		if not inst_keys.is_empty() and inst_keys.has(i.id):
+			_own_keys(i, inst_keys[i.id])
+			continue
+		if not fired and held.is_empty() and pressed.is_empty() and released.is_empty():
+			if inst_keys.is_empty():
+				break
 			continue
 		if fired:
 			held = keys.held_list()
@@ -1577,6 +1732,8 @@ func draw_frame() -> void:
 		ti = _draw_tiles_until(tl, ti, -INF, rec)
 		if room_draw:
 			builtins.draw_backgrounds(true)
+	if draw_end_hook.is_valid():
+		draw_end_hook.call()
 	if builtins.canvas != null and builtins.canvas.has_method("gui_begin"):
 		builtins.canvas.gui_begin()
 	var list: Array = instances.duplicate()

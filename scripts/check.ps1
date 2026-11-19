@@ -76,6 +76,82 @@ $dt = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $en
 $dok = ("$dt" -match 'DEBUGTEST done, 0 failed') -and ("$dt" -match 'DEBUGTEST2 done') -and -not ("$dt" -match 'DEBUGTEST FAIL|SCRIPT ERROR')
 Say $dok 'debug menu (F5): every part used once' $(if ($dok) { '' } else { "$dt" })
 
+# Title screen, universes and co-op.
+$ut = Join-Path $env:TEMP 'ube_check_universes'
+Remove-Item -Recurse -Force $ut -ErrorAction SilentlyContinue
+$uo = (& $godot --headless --path $gd -- --unitest --universesdir $ut 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^UNITEST|SCRIPT ERROR' }) -join "`n"
+Say ($uo -match 'UNITEST done, 0 failed' -and -not ($uo -match 'SCRIPT ERROR')) 'universes' $uo
+$fo = (& $godot --headless --path $gd -- --fronttest --universesdir $ut 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^FRONTTEST|SCRIPT ERROR' }) -join "`n"
+Say ($fo -match 'FRONTTEST done, 0 failed' -and -not ($fo -match 'SCRIPT ERROR')) 'title screen' $fo
+$so = (& $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP 'ube_check_coopsave') --room room_ruins7 --set plot=9.2 --coopsavetest 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^COOPSAVE|SCRIPT ERROR' }) -join "`n"
+Say ($so -match 'COOPSAVE done, all ok' -and -not ($so -match 'SCRIPT ERROR')) 'co-op saves (both characters)' $so
+$sn = (& $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP 'ube_check_snap') --room room_ruins7 --set plot=9.2 --snaptest 120 60 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^SNAPTEST|SCRIPT ERROR' }) -join "`n"
+Say ($sn -match ': same' -and -not ($sn -match 'SCRIPT ERROR')) 'co-op state snapshot' $sn
+# Two games on this PC, linked: the host walks into a battle in the Ruins and plays MERCY
+# (the friend starts on 1 HP, goes down, and is revived after 3 turns). Both must end in
+# exactly the same state.
+$cu = Join-Path $env:TEMP 'ube_check_coop'
+Remove-Item -Recurse -Force $cu -ErrorAction SilentlyContinue
+$walkp = (0..40 | ForEach-Object { $a = 80 + $_ * 60; "${a}:39x25,$($a + 30):37x25,$($a + 27):90x2" }) -join ','
+$walkq = (0..40 | ForEach-Object { $a = 80 + $_ * 60; "$($a + 5):38x20,$($a + 35):40x20,$($a + 28):90x2" }) -join ','
+$hostlog = Join-Path $env:TEMP 'ube_check_coop_host.txt'
+$hargs = @('--headless', '--path', "`"$gd`"", '--', '--coophost', '7771', '--as', 'Kyle', '--universesdir', "`"$cu\h`"", '--room', 'room_ruins9', '--set', 'plot=9.2,hp=300', '--press', $walkp, '--coopbot', '--matehp', '1', '--frames', '1600', '--tps', '200', '--cooplog')
+$hp = Start-Process -FilePath $godot -ArgumentList $hargs -RedirectStandardOutput $hostlog -RedirectStandardError (Join-Path $env:TEMP 'ube_check_coop_host_err.txt') -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$co = & $godot --headless --path $gd -- --coopjoin 127.0.0.1:7771 --as Greg --universesdir (Join-Path $cu 'c') --press $walkq --frames 1600 --tps 200 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^COOP client stopped|SCRIPT ERROR' }
+$hp.WaitForExit(60000) | Out-Null
+if (-not $hp.HasExited) { Stop-Process -Id $hp.Id -Force }
+$ho = Get-Content $hostlog | Where-Object { $_ -match '^COOP host stopped|SCRIPT ERROR|^CBAT' }
+$hs = ("$ho" -replace '.*COOP host stopped at frame \d+: \d+ frames together, (\d+) mismatches.*state (\d+).*', '$1 $2')
+$cs = ("$co" -replace '.*COOP client stopped at frame \d+: \d+ frames together, (\d+) mismatches.*state (\d+).*', '$1 $2')
+$revived = ("$ho" -match '"client": true') -and ("$ho" -match 'mate_hp=6.0 down=\{ "host": false, "client": false \}')   # 30% of 20 HP
+# The game's own SOUL stays visible while dodging, whoever's turn it is (it once kept the
+# spare SOUL's "hidden" after the turn passed).
+$hidden = @($ho | Where-Object { $_ -match '^CBAT .* mn=2\.0 .*main=[-0-9.]+,[-0-9.]+ mv0' }).Count
+$cok = ("$ho" -match 'COOP host stopped') -and ("$co" -match 'COOP client stopped') -and $hs -eq $cs -and $hs -match '^0 ' -and $revived -and $hidden -eq 0 -and -not ("$ho $co" -match 'SCRIPT ERROR')
+Say $cok 'co-op: two games in one battle (two SOULs, down, revive), in sync' $(if ($cok) { '' } else { "host: $hs client: $cs revived: $revived hidden SOUL: $hidden" })
+
+# Multiplayer rework (docs/MULTIPLAYER.md). Stage 1: a second world (a battle that plays to
+# a game over, with its own globals) runs beside the Ruins stress bot; the game's own world
+# must not notice (the same state checksums as without it).
+$wa = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP 'ube_check_wa') --room room_ruins7 --set plot=9 --frames 1500 --bot (Join-Path $root 'tests\stress_ruins.txt') --worldhash 50 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^WHASH|SCRIPT ERROR' }
+$wb = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP 'ube_check_wb') --room room_ruins7 --set plot=9 --frames 1500 --bot (Join-Path $root 'tests\stress_ruins.txt') --worldhash 50 --worldtest room_battle --worldat 20 --worldset battlegroup=4 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^WHASH|^WORLDTEST|SCRIPT ERROR' }
+$wsame = (@($wa | Where-Object { $_ -match '^WHASH' }) -join ' ') -eq (@($wb | Where-Object { $_ -match '^WHASH' }) -join ' ')
+$wok = $wsame -and @($wa).Count -ge 25 -and ("$wb" -match 'WORLDTEST world 1 in room_battle') -and -not ("$wa $wb" -match 'SCRIPT ERROR')
+Say $wok 'worlds: a second room running alongside changes nothing in the game' $(if ($wok) { '' } else { "same checksums: $wsame, lines $(@($wa).Count)" })
+# Stage 2: several players in one game. Player 2 reads a sign, eats a candy from their own
+# menu, and falls through a hole, each while player 1 does something else.
+$mpruns = @(
+    @('sign', @('--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '175', '--press', '40:39x15,80:37x15', '--pfeed', '2=10:39x7,20:38x25,60:90x2,100:90x2,140:90x2')),
+    @('menu', @('--room', 'room_ruins9', '--set', 'plot=9.2,hp=10,item.0=1,item.1=1', '--frames', '205', '--press', '40:39x15,80:37x15', '--pfeed', '2=30:67x2,50:90x2,70:90x2,90:90x2,120:90x2,150:90x2')),
+    @('hole', @('--room', 'room_ruins8', '--set', 'plot=9.2', '--frames', '155', '--pfeed', '2=10:39x90'))
+)
+foreach ($r in $mpruns) {
+    $mo = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP "ube_check_mp_$($r[0])") --players 2 --mpcheck $r[0] @($r[1]) 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' }
+    $mok = ("$mo" -match "MPCHECK $($r[0]) done, 0 failed") -and -not ("$mo" -match 'SCRIPT ERROR')
+    Say $mok "players: $($r[0])" $(if ($mok) { '' } else { (@($mo | Where-Object { $_ -match 'FAIL|ERROR' }) -join '; ') })
+}
+
+if ($Full) {
+    # The story walkthrough with a friend joined (the friend only takes battle turns), from the
+    # intro to Napstablook (the bots can't win that one together). --coopdelay 1: the bot's
+    # keys land on the frame it chose them for, as when playing alone.
+    $wd = Join-Path $env:TEMP 'ube_check_coopwalk'
+    Remove-Item -Recurse -Force $wd -ErrorAction SilentlyContinue
+    $wlog = Join-Path $env:TEMP 'ube_check_coopwalk_host.txt'
+    $wargs = @('--headless', '--path', "`"$gd`"", '--', '--coophost', '7772', '--as', 'Kyle', '--universesdir', "`"$wd\h`"", '--savedir', "`"$wd\save`"", '--frames', '14500', '--tps', '400', '--coopdelay', '1', '--bot', "`"$walk`"", '--matehp', '999', '--cooplog')
+    $wp = Start-Process -FilePath $godot -ArgumentList $wargs -RedirectStandardOutput $wlog -RedirectStandardError (Join-Path $env:TEMP 'ube_check_coopwalk_err.txt') -PassThru -WindowStyle Hidden
+    Start-Sleep -Seconds 3
+    $wc = & $godot --headless --path $gd -- --coopjoin 127.0.0.1:7772 --as Greg --universesdir (Join-Path $wd 'c') --frames 14500 --tps 400 --coopdelay 1 --coopbot 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^COOP client stopped|SCRIPT ERROR' }
+    $wp.WaitForExit(120000) | Out-Null
+    if (-not $wp.HasExited) { Stop-Process -Id $wp.Id -Force }
+    $wh = Get-Content $wlog | Where-Object { $_ -match '^COOP host stopped|SCRIPT ERROR|^BOT .*(FAIL|ok z_until battle)|^ROOM room_ruins12 ' }
+    $whs = ("$wh" -replace '.*COOP host stopped at frame \d+: \d+ frames together, (\d+) mismatches.*state (\d+).*', '$1 $2')
+    $wcs = ("$wc" -replace '.*COOP client stopped at frame \d+: \d+ frames together, (\d+) mismatches.*state (\d+).*', '$1 $2')
+    $wok = ("$wh" -match 'ROOM room_ruins12 ') -and ("$wh" -match 'ok z_until battle') -and -not ("$wh" -match 'FAIL') -and $whs -eq $wcs -and $whs -match '^0 ' -and -not ("$wh $wc" -match 'SCRIPT ERROR')
+    Say $wok 'co-op: the walkthrough to Napstablook with a friend joined, in sync' $(if ($wok) { '' } else { "host: $whs client: $wcs; $(@($wh | Where-Object { $_ -match 'FAIL' }) -join ' ')" })
+}
+
 $secs = [int]((Get-Date) - $t0).TotalSeconds
 if ($fail -eq 0) { Write-Host "All checks passed in $secs s." } else { Write-Host "$fail check(s) FAILED ($secs s)." }
 exit $(if ($fail -eq 0) { 0 } else { 1 })

@@ -59,6 +59,29 @@ func poll(auto_keys = null) -> void:
 			now.erase(k)
 
 
+# The keys held on this PC right now, as poll() would see them (co-op sends these).
+func sample_local() -> Array:
+	var r := {}
+	for gk in MAP:
+		if Input.is_physical_key_pressed(gk):
+			r[MAP[gk]] = true
+	for c in range(KEY_A, KEY_Z + 1):
+		if Input.is_physical_key_pressed(c):
+			r[c] = true
+	for c in range(KEY_0, KEY_9 + 1):
+		if Input.is_physical_key_pressed(c):
+			r[c] = true
+	if wasd:
+		for pair in [[87, 38], [65, 37], [83, 40], [68, 39]]:
+			if r.has(pair[0]):
+				r[pair[1]] = true
+	if not queue.is_empty():
+		var q := int(queue.pop_front())
+		if q > 0:
+			r[q] = true
+	return r.keys()
+
+
 func held(code: int) -> bool:
 	if code == 1:
 		return not now.is_empty()

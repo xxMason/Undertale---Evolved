@@ -69,16 +69,64 @@ PLAYING
 Double-click play.bat. Keep the black console window open: it shows messages, and closing
 it closes the game.
 
-Fight select:
-  Arrows / mouse   choose        Z / click   fight        C   setup        Esc   quit
-Setup has LV (1-20), arrows or WASD, smooth motion, window size, scaling and fullscreen.
+The first time, it asks your name (yours, not the fallen human's). Then the title screen,
+UNDERTALE: Evolved:
+  Start Game     play Undertale in one of your universes
+  Host Game      the same, with a friend on your network (see CO-OP below)
+  Join           join a friend's game
+  Battle Engine  the fight select from earlier versions (single battles, Battle Creator)
+  Settings       your name, controls, window, smooth motion
+  Quit
+Arrows choose, Z / Enter confirm, X / Esc go back.
 
-G on the fight select starts UNDERTALE ITSELF from the beginning (intro, naming, Flowey,
-Toriel, the Ruins). Controls are Undertale's; hold Esc to quit back to the fight select.
-Its saves are separate from your real ones (see "Your files" below).
+UNIVERSES
+A universe is a world of its own, like a Minecraft world: its own save, its own story
+(routes, resets, everything) and its own players. Make as many as you like; whatever
+happens in one never touches another. Your save from an earlier version was moved into
+a universe of its own. Name one when you make it, or it's called "<your name>'s Universe".
+Cheats (the F5 debug menu) can be turned on when you make a universe or later, but never
+off again. Delete asks twice and puts the universe in the Recycle Bin.
 
-In battle the controls are Undertale's (arrows, Z, X, C). Esc leaves the fight.
+In the game the controls are Undertale's (arrows, Z, X, C). Hold Esc to go back to the
+title screen.
   F2   smooth motion on/off      F3   WASD on/off        F4   fullscreen
+
+
+CO-OP (two players on the same network)
+One of you picks Host Game and a universe; the other picks Join, where games on your
+network show up by themselves (like Minecraft's LAN worlds): click one to pick it,
+double-click (or Z) to join. Or type the host's address with "Join by IP". Both need the same version, the same
+game data and the same mods, or Join says what's different.
+  - You both walk around as the human, with your names above your heads. Each screen
+    follows its own player, except while text, a menu or a cutscene is up: then both
+    screens show the same view. Whoever talks to someone, checks something, opens their
+    menu (C) or goes through a door first takes the lead for that.
+  - HP, items and gold are each player's own; LV and EXP are shared. C opens your own
+    menu with your own items; your friend's screen shows it too, marked "<name>'s menu". A friend joining for
+    the first time starts at the host's LV with half the host's gold (the host keeps theirs).
+  - Battles: both of you are in them, each with your own SOUL, and both of you dodge every
+    attack, and attacks aim at either of you. You take turns choosing in the menu. Your HP is at the bottom as usual; your
+    teammate's is in the top-left corner.
+  - Items: choosing one asks "Who?", so you can feed your teammate.
+  - At 0 HP you're down for the rest of the fight. After 3 turns, MERCY has
+    "Revive <name>": it takes the turn and brings them back on 30% HP, safe from attacks
+    for a moment. Anyone still down when the battle ends gets up on 1 HP. Both down is a
+    game over; either of you can go on from there.
+  - A save point heals you both. Saving saves the world and both characters together, so loading or resetting puts you
+    both back to that save. The universe stays the host's; a friend's character is kept in
+    it for next time. Several friends can play in one universe, two at a time.
+  - Only the host can pause (F10) or change game speed. Cheats follow the universe: with
+    them on, the host has the whole F5 menu and a friend's F5 changes their own HP, gold
+    and items only.
+  - Each friend's PC also keeps its own copy of their character. If the host's universe
+    has none (say it was lost), that copy is used, as long as it looks possible.
+  - If your friend leaves, the host carries on alone. If they come back before the host
+    quits or loads, they're as they were when they left.
+The game uses port 7777 (and 7778 to find games). If Join can't find or reach the host,
+allow the game through Windows Firewall on the host's PC (Windows usually asks the first
+time; choose "Private networks"). Not on the same network? Tailscale or Radmin VPN put
+you on one: both install it, join the same network, then use Join by IP with the
+address it shows for the host.
 
 
 TESTING KEYS

@@ -1,0 +1,249 @@
+# Multiplayer rework: architecture and rules
+
+Agreed with the project owner on 2026-11-19. This replaces the 0.4.x co-op design (one real
+player plus a "partner" drawn beside them, lockstep netcode, leader swapping). The goal is an
+Undertale that is multiplayer by nature, for up to 4 players, built on Undertale's own code but
+reworked wherever its one-player assumptions get in the way, and shaped so a drag-and-drop
+editor and mods can use every part of it.
+
+## What stays the same, and what changes
+
+Kept from Undertale, loaded from the player's own install and never shipped:
+
+- Sprites, sounds, music, tiles, fonts and rooms as the starting content.
+- Attack patterns and enemy behaviour (bullets, boss fights). Attacks learn to target "a SOUL"
+  rather than "the SOUL", nothing more.
+- 30 fps game timing, the GameMaker random generator, Undertale's text codes (`\E`, `^1`, `/`...).
+- Complex cutscenes stay as their original code, made player-aware, until someone rebuilds them
+  as data.
+- How the game *feels*: sprites, timing, boss fights. Solo play with no mods is still checked
+  against the real game (scripts/check.ps1), because that is the best bug detector we have.
+
+Not bound to the original: logic. Multiplayer, new items, menus, saving rules and so on are
+free to differ from Undertale.
+
+## The one rule: there is no "the player"
+
+Every system works for *a* player. Every event says which player caused it ("on interact
+(player)", "on enter trigger (player)"), and every system asks which player it is acting for.
+A game with one player is simply a player list with one entry, not a separate mode. Mods built
+on the engine's API are multiplayer-safe because they cannot express a one-player assumption.
+
+## Three kinds of state
+
+| Kind | Examples | Where it lives | Sent over the network |
+|---|---|---|---|
+| World | rooms and their objects, story flags (`plot`, most of `flag`), kill count and route, LV and EXP | the host | no (only its picture) |
+| Player | position, HP, items, gold, weapon and armour, busy state (`interact`), open text box, menu, step counter, per-player pickups | the host, one copy per player | no (only its picture) |
+| Screen | camera, what is drawn, HUD, chat window, prompts | each PC | never |
+
+### Player overlays
+
+Undertale keeps player state in globals (`global.interact`, `global.hp`, `global.item`,
+`global.msg`...). The engine keeps a table of which globals are per-player (data, editable,
+mods can add to it). When code runs on behalf of a player, that player's copies are swapped in;
+the 0.4 co-op battle code already does a small version of this for the second SOUL
+(`gml_vm.gd` scope_enter / scope_exit).
+
+### Ownership
+
+Every instance can have an owner (a player). Rules:
+
+1. A player's own character (`obj_mainchara`, their SOUL) is owned by them.
+2. An instance created by code running for player P is owned by P. So an NPC's text box and
+   writer, created after P talked to it, belong to P.
+3. An object a player touches or interacts with runs that event for that player, and becomes
+   theirs until its scene ends (the 0.4 code did this by swapping the real character around).
+4. World objects (doors, platforms, a cutscene before it starts) have no owner.
+
+Code running for P sees P's overlays, and `obj_mainchara` / `obj_heart` mean P's own instance.
+Code with no owner sees the world view: `obj_mainchara` means the nearest player where that
+makes sense (a trigger), and a player counts as busy only in a Gather or Room scene.
+
+## Network: the host runs the game
+
+Lockstep (every PC runs the whole game and they swap key presses) is replaced:
+
+- Only the host runs the game, every room that has a player in it.
+- Each other PC sends its key presses and receives the *picture* of its own screen: draw
+  commands (sprite, frame, position, colour, text) and sound events. Tiles and other room
+  furniture are sent once per room. Each PC still loads the sprites and sounds from its own
+  Undertale install, so nothing from Undertale goes over the network.
+- Your own movement is predicted on your PC and shows at once, corrected by the host if it
+  differs, so walking never waits on the network. The same goes for your SOUL in battle: your
+  PC moves it and reports where it is, and the host decides hits from that (co-op between
+  friends, so trusting your own SOUL is fine).
+- One slow PC no longer holds everyone back, and a mismatch can no longer split the games apart,
+  because there is only one real game.
+- Private sessions only: join by address with a password. Everyone needs the same mods (the
+  host checks its mod list against yours; later it may send engine-format mods, never files
+  holding Undertale's own assets).
+- Friends can join and leave at any time; their character waits in the universe. If the host
+  leaves, the session ends for everyone after a save.
+- Host controls: kick, change the password, the existing cheat rules.
+- Internet play (port forwarding, Tailscale or Radmin work already; a relay server later) waits
+  until LAN play is right.
+
+Tester builds become exported apps, which run the game code much faster than the Godot editor.
+
+## Rooms
+
+Players can be in different rooms. Each room with at least one player in it is a running
+*world* on the host; a room with nobody in it is not running (as in GameMaker, an ordinary room
+starts fresh when someone enters). Story flags and other world globals are shared by all of
+them, so opening a door in the Ruins opens it for everyone. Movement is fully free.
+
+## Encounters and battles
+
+- Every player has their own step counter, as in Undertale, and gets their own encounters.
+- Players in the same room and close by are pulled into the battle. Anyone further away or in
+  another room is not. A player in a menu or a text box is skipped; for a boss, the others are
+  told "<name> is busy".
+- A player not in the battle sees "<name> is in a battle" above that player. Pressing Enter near
+  them asks "Join Battle?" (Yes / No); a Yes joins at the start of the next turn. Several battles
+  can run at once.
+- All of this is a setting mods can change: the pull-in range, joining mid-battle, solo-only
+  fights.
+- Up to 4 SOULs, turns in order, revive under MERCY (from 0.4). Other players' SOULs are drawn at
+  25% opacity so your own stands out; SOUL colours keep their Undertale meaning.
+- Attacks that would be trivial with several players get per-player versions. Example: Undyne's
+  green-SOUL spears come at each player separately, so the party cannot all block one direction.
+- Optional "Co-op Difficulty Scaling" (more enemy HP per player). Off by default.
+- A player downed in a battle they are in alone respawns at the universe's last save point on
+  full HP with their items as they were, and everyone else is told they died. No other penalty.
+  In a shared battle the existing revive rules apply. Game over only when every player is down.
+- EXP and LV are shared (the kill count is shared too).
+
+## Story scenes
+
+Each scene has a setting (chosen by us for Undertale's scenes, by modders for theirs):
+
+| Setting | Used for | Behaviour |
+|---|---|---|
+| Gather | major scenes and bosses (Toriel, Papyrus, Undyne...) | The trigger waits ("waiting for 1 more player"). Players elsewhere get "Teleport to Story Event?" (Yes / No). Yes brings them there; No is reported to whoever triggered it. A busy player (menu, battle, text) gets the prompt when they are free. The scene plays for the whole party. |
+| Room | smaller scenes | Only players in that room take part; others get a short note. |
+| Personal | signs, simple NPC talks, shops | Only the player who triggered it sees it; everyone else keeps playing. |
+
+- Choices (spare or fight, and so on) are made by whoever is in the choice box. Friends coordinate
+  in person; sessions are private.
+- Characters who follow you (Toriel in the Ruins) follow whoever started the scene. This needs a
+  trial in the Ruins.
+
+## Items, menus and saves
+
+- Each player has their own menu, drawn by the engine in Undertale's style, with their own items,
+  gold and stats. Several can be open at once, and the world keeps running. Using an item still
+  runs Undertale's original item code for that player.
+- Item pickups in the world are per player: everyone gets their own copy. Limited things that are
+  meant to be shared stay shared.
+- Press Enter facing another player for the player menu:
+  - **Give item**: hand them one of your items.
+  - **Give gold**.
+  - **Heal**: use one of your food items on them.
+  - **Check**: their LV, HP, AT, DF, weapon and armour, like Undertale's STAT page.
+- Saving: anyone can save at a save point, and it saves the whole universe for everyone, with a
+  text box telling everyone who saved. Saving is refused while any player is in a menu or a
+  battle. Each player's position is saved; on load everyone returns together at that save point.
+
+## Chat
+
+T opens a chat window in Undertale's style. Each player's lines are marked with a SOUL in their
+colour: host red, then blue, green and yellow for players 2 to 4.
+
+## Look and feel
+
+Every new window, prompt and notification uses Undertale's style: its fonts, black boxes with
+white borders, the SOUL as the cursor, Undertale's sounds for moving and confirming. "Join
+Battle?" and "Teleport to Story Event?" look like Undertale's own yes/no choices.
+
+## Stages
+
+Each stage ends with every existing check passing (solo still matches the real game) plus its
+own tests. Every stage is measured for frame time (worst frame, not just the average), hitches
+and skipped frames, and checked by screenshots of every player's screen.
+
+1. **Worlds.** Split the GML machine's per-room state (instances, room, views, tiles,
+   backgrounds, audio routing) into a World object, with code and shared globals kept once.
+   One world behaves exactly as today.
+2. **Players and ownership.** A player list (1-4), several `obj_mainchara` in one world, the
+   per-player overlay table, ownership through creation and interaction. Leader swapping is
+   removed. Tested locally with several bot-driven players in one process, no network.
+3. **Screens.** Each world's drawing becomes a list of draw commands; each player's screen is
+   built from their camera plus their own private content; on-screen things are pinned to the
+   screen. Other players' SOULs at 25%. Sound routed to the players who should hear it.
+4. **Network.** Host runs the game, clients send keys and draw what they receive, own movement
+   and SOUL predicted. Replaces lockstep. Join with password, version and mod check, join and
+   leave at any time. Lag measured on LAN.
+5. **Many rooms.** One world per occupied room, players moving between worlds through doors,
+   shared globals.
+6. **Rules.** Encounters per player and pulling in, Join Battle, solo death and respawn, Gather /
+   Room / Personal scenes with the teleport prompt and its queue, saving rules, per-player
+   pickups.
+7. **Engine menus.** Per-player menu with Give, the player menu (Enter on a player), chat on T,
+   notifications. All in Undertale's style.
+8. **Battles.** Up to 4 SOULs, per-player attack versions (Undyne's spears), Co-op Difficulty
+   Scaling, the Toriel follower trial.
+9. **The Ruins with 1-4 players**, start to finish, then the rest of the game area by area. The
+   editor's building blocks (doors, signs, NPCs, save points, triggers, shops) grow out of the
+   objects these stages have to understand anyway.
+
+## Progress
+
+### Stage 1: worlds (done 2026-11-19)
+
+`godot/gml/gml_world.gd`. The GML machine keeps the active world's state in its own fields
+(so the hot paths are unchanged), and `World.use()` switches between worlds by swapping
+those fields: instances, ids, room and its size, views, tiles, backgrounds, drawing state,
+random generator, keys, sounds playing. Each world numbers its instances, sounds and tiles
+from its own base (world k from 100001 + k x 10^9), so a player can later move between worlds
+without id clashes. Globals, parked persistent rooms and open files are shared; a test world
+can take private copies (`World.private_copy`).
+
+Test: `--worldtest ROOM [--worldat F] [--worldset k=v,...]` runs ROOM as a second world beside
+the game, stepped and drawn every frame (tapping Z, so a battle there plays on), and
+`--worldhash N` prints the game world's checksum every N frames. The checksums must equal a run
+without the second world. Checked over 8000 frames of the Ruins walkthrough with a battle that
+plays to a game over, an overworld room, and the first room; scripts/check.ps1 runs a short one.
+
+### Stage 2: players and ownership (done 2026-11-19)
+
+`godot/mp_players.gd`, hooks in `gml_vm.gd` (owners_on, ctx_owner, owner_switch, claimed,
+private_objs, multi_objs). What works:
+
+- Up to 4 players, each a real `obj_mainchara` with their own keys. The room's own one is
+  player 1's; the others are created beside it in their own context.
+- `PER_PLAYER` globals swapped per event: input (`control_*` and obj_time's arrow fields),
+  facing, interact, phasing, entrance, encounter, currentroom, menu state, HP and stats, gold,
+  items, phone, and the text box globals (`msg`, `msc`, `typer`, `choice`...). Each player's
+  camera (view 0) is kept the same way.
+- Instances created in a player's context are theirs. An object becomes a player's while they
+  are busy with it: talking to it (`scr_interact`), or any world object whose event makes them
+  busy (a hole they fall into, a trigger). It is released once its talk is over, the player is
+  free and its alarms are done.
+- Text boxes and faces are private: in a player's context only their own (and the world's)
+  exist; the world sees its own and player 1's, as in the one-player game.
+- The overworld menu (`obj_overworldcontroller`) runs once per player with their own copy of
+  its variables, so every player can have their own menu open at once, with their own items.
+- With one player nothing is swapped and the game is the original.
+
+Tests: `--players N --pfeed "2=SPEC;3=SPEC"` (SPEC: `follow`, `idle`, or presses like `--press`),
+`--mplog N` (each player's state and the worst and average frame time), `--mpcheck NAME`
+(mp_tests.gd: `sign`, `menu`, `hole`, run by scripts/check.ps1), `--hitchlog` (frames over
+40 ms, with the test bot's own time shown separately).
+
+Measured (headless, Ruins walkthrough): average frame 2-3 ms solo, 3-4.5 ms with 4 players
+following player 1; same rooms reached on the same frames as solo. The large spikes seen in
+test runs (0.8 s) are the test bot's path finding, not the game; the game's own worst is about
+65 ms when a battle starts (first run of its code), with 1 or 4 players.
+
+Known gaps, by the stage that closes them:
+
+- Every player sees player 1's view on this PC, including player 2's text and menu (stage 3).
+- A door used by any player takes everyone to the next room; battles take everyone out of the
+  overworld (stages 5, 6, 8).
+- World objects see player 1 as "the player": random encounters count player 1's steps, story
+  triggers watch player 1 (stage 6).
+- Each player's own End Step moves the shared background layers (`obj_backgrounder_parent`) to
+  their own camera; the last one wins (stage 3 draws each screen separately).
+- Saving and loading still store one player (stage 6).
+- The 0.4 co-op (lockstep, leader swap) is still what Host Game / Join use (stage 4 replaces it).

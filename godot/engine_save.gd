@@ -20,6 +20,11 @@ const DEFAULTS := {
 	"display/pixel_perfect": true,
 	"display/fullscreen": false,
 	"debug/overlay": false,
+	"player/name": "",        # your own (human) name, asked on the first start
+	"player/id": "",          # made once per install; how universes and co-op know you
+	"universes/migrated": false,
+	"coop/last_ip": "",       # Join by IP remembers the last address
+	"coop/sans_seen": "",     # universes (ids) where you've had the word from Sans about cheats
 }
 
 

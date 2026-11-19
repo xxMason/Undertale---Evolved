@@ -119,6 +119,13 @@ func setup(engine) -> void:
 func toggle() -> void:
 	if not open and not eng.in_play():
 		return
+	if not open and not eng.cheats_allowed():
+		eng.cheats_refused()
+		return
+	# A co-op friend only gets their own character (coop_cheats.gd).
+	if eng.coop.active() and not eng.coop.is_host():
+		eng.friend_cheats.toggle()
+		return
 	open = not open
 	panel.visible = open
 	if open:

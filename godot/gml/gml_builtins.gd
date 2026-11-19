@@ -435,11 +435,26 @@ func _set_gain(target, gain: float, ms: float) -> void:
 			tw.tween_method(func(lin: float): pl.volume_db = linear_to_db(maxf(lin, 0.00001)), db_to_linear(pl.volume_db), g, ms / 1000.0)
 			p["tween"] = tw
 
+# Co-op (det_audio): whether a sound is still playing is worked out from game frames, not
+# from the sound card, so two PCs running the same frames always agree on it.
+var det_audio := false
+
+
+func _alive(p: Dictionary) -> bool:
+	if not det_audio:
+		return p["player"].playing or p["paused"]
+	if p.get("stopped", false):
+		return false
+	if p["paused"] or p.get("loop", false):
+		return true
+	return (vm.step_no - int(p.get("t0", 0)) - int(p.get("pt", 0))) < int(p.get("steps", 0))
+
+
 func _cleanup_players() -> void:
 	var keep: Array = []
 	for p in players:
 		var pl: AudioStreamPlayer = p["player"]
-		if pl.playing or p["paused"]:
+		if _alive(p):
 			keep.append(p)
 		else:
 			pl.queue_free()
@@ -470,7 +485,9 @@ func play_sound(snd: int, loop: bool) -> float:
 	audio_root.add_child(pl)
 	var id := next_sound_id
 	next_sound_id += 1
-	var entry := {"player": pl, "sound": snd, "id": id, "paused": false, "gain": 1.0}
+	var entry := {"player": pl, "sound": snd, "id": id, "paused": false, "gain": 1.0,
+		"loop": loop, "t0": vm.step_no, "pt": 0, "pa": -1,
+		"steps": ceili(stream.get_length() * 30.0 / pl.pitch_scale)}
 	_apply_volume(entry)
 	pl.play()
 	players.append(entry)
@@ -2217,6 +2234,7 @@ func _f_audio_stop_sound(name: String, a: Array, ctx: Dictionary):
 	for p in _players_for(_a(a, 0)):
 		p["player"].stop()
 		p["paused"] = false
+		p["stopped"] = true
 	return 0.0
 	return 0.0
 
@@ -2225,6 +2243,7 @@ func _f_audio_stop_all(name: String, a: Array, ctx: Dictionary):
 	for p in players:
 		p["player"].stop()
 		p["paused"] = false
+		p["stopped"] = true
 	return 0.0
 	return 0.0
 
@@ -2232,7 +2251,7 @@ func _f_audio_stop_all(name: String, a: Array, ctx: Dictionary):
 func _f_audio_is_playing(name: String, a: Array, ctx: Dictionary):
 	_cleanup_players()
 	for p in _players_for(_a(a, 0)):
-		if p["player"].playing:
+		if (_alive(p) and not p["paused"]) if det_audio else p["player"].playing:
 			return 1.0
 	return 0.0
 	return 0.0
@@ -2282,6 +2301,8 @@ func _f_audio_sound_get_pitch(name: String, a: Array, ctx: Dictionary):
 func _f_audio_pause_sound(name: String, a: Array, ctx: Dictionary):
 	for p in _players_for(_a(a, 0)):
 		p["player"].stream_paused = true
+		if not p["paused"]:
+			p["pa"] = vm.step_no
 		p["paused"] = true
 	return 0.0
 	return 0.0
@@ -2290,6 +2311,9 @@ func _f_audio_pause_sound(name: String, a: Array, ctx: Dictionary):
 func _f_audio_resume_sound(name: String, a: Array, ctx: Dictionary):
 	for p in _players_for(_a(a, 0)):
 		p["player"].stream_paused = false
+		if p["paused"] and int(p.get("pa", -1)) >= 0:
+			p["pt"] = int(p.get("pt", 0)) + vm.step_no - int(p["pa"])
+			p["pa"] = -1
 		p["paused"] = false
 	return 0.0
 	return 0.0
@@ -2298,6 +2322,8 @@ func _f_audio_resume_sound(name: String, a: Array, ctx: Dictionary):
 func _f_audio_pause_all(name: String, a: Array, ctx: Dictionary):
 	for p in players:
 		p["player"].stream_paused = true
+		if not p["paused"]:
+			p["pa"] = vm.step_no
 		p["paused"] = true
 	return 0.0
 	return 0.0
@@ -2306,6 +2332,9 @@ func _f_audio_pause_all(name: String, a: Array, ctx: Dictionary):
 func _f_audio_resume_all(name: String, a: Array, ctx: Dictionary):
 	for p in players:
 		p["player"].stream_paused = false
+		if p["paused"] and int(p.get("pa", -1)) >= 0:
+			p["pt"] = int(p.get("pt", 0)) + vm.step_no - int(p["pa"])
+			p["pa"] = -1
 		p["paused"] = false
 	return 0.0
 	return 0.0
@@ -2313,6 +2342,11 @@ func _f_audio_resume_all(name: String, a: Array, ctx: Dictionary):
 
 func _f_audio_sound_get_track_position(name: String, a: Array, ctx: Dictionary):
 	for p in _players_for(_a(a, 0)):
+		if det_audio:
+			var el: int = (int(p["pa"]) if p["paused"] and int(p.get("pa", -1)) >= 0 else vm.step_no) - int(p.get("t0", 0)) - int(p.get("pt", 0))
+			var ln: float = p["player"].stream.get_length() if p["player"].stream != null else 0.0
+			var t: float = el / 30.0 * p["player"].pitch_scale
+			return fmod(t, ln) if p.get("loop", false) and ln > 0.0 else minf(t, ln)
 		return p["player"].get_playback_position()
 	return 0.0
 	return 0.0
@@ -3020,6 +3054,7 @@ func _f_window_get_zero(name: String, a: Array, ctx: Dictionary):
 # the old behaviour: no file exists and nothing is written, so battles never depend on saves.
 
 var save_dir := ""
+var on_save_read := Callable()      # called with the path of each save file read to the end (co-op)
 var on_save_written := Callable()   # called with the path of each save file written (debug mark)
 var ini_path := ""
 var ini_data := {}          # section -> {key -> value string}, insertion ordered
@@ -3205,6 +3240,8 @@ func _f_file2(name: String, a: Array, ctx: Dictionary):
 					f.close()
 					if on_save_written.is_valid():
 						on_save_written.call(tf["path"])
+			elif not tf.is_empty() and on_save_read.is_valid():
+				on_save_read.call(tf["path"])
 			text_files.erase(id)
 			return 0.0
 		"file_text_write_string":

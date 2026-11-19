@@ -309,6 +309,19 @@ now 0.5 ms). Dust frames are now about 9-15 ms. To look for hitches on screen:
 `--battle 0 --hitchlog` prints every displayed frame over 25 ms (`HITCH frame dt logic
 draw inst ops`), and `--prof --spikes` prints the top phases of any game frame over 8 ms.
 
+## Title screen, universes and co-op
+
+- `front_menu.gd`: the name prompt, the UNDERTALE: Evolved title screen, the universe list (create, rename, cheats, delete), Settings and Join.
+- `universes.gd`: each universe is a folder in `%APPDATA%\UltimateBattleEngine\universes\<id>` with `universe.json` (name, cheats, players) and `save\` (the game's file0 / file8 / undertale.ini, plus `coop_friends.json`).
+- `coop_net.gd`: LAN co-op in lockstep. Both PCs run the whole game from the same keys: each frame's keys from both players go to both (3 frames of input delay; `--coopdelay N` on both PCs changes it, tests use 1 so a bot's keys land on the frame it chose them for), a state checksum every 30 frames, and the host resends its full state (`coop_state.gd`, about 8 KB compressed) if they ever differ. Games are found by a UDP beacon on port 7778; play is on 7777. Sound timing in co-op runs on game frames (`det_audio`) so both PCs agree.
+- `coop_partner.gd`: the second player in the overworld. The game has one player, the leader; the other walks the same room and takes the lead (positions and their own HP, items, gold, weapon and armor swap) when they press Z, open their menu (C) or use a door. Each PC's picture follows its own player, except while `global.interact` is set (text, menus, cutscenes): the game places text boxes by its own view, so then both PCs draw that view, and the other player's menu is labelled with their name. A save point (obj_savepoint healing the leader) heals both. A friend who leaves and comes back in the same session gets their character back as it was (`_left_friends`, cleared by a load). On a game over either player's keys count.
+- `coop_battle.gd`: the second SOUL. It's a second obj_heart; events on it (or on a bullet touching it) run with that player's keys and stats swapped in (`scoped` / `scope_enter` / `scope_exit` in `gml_vm.gd`), so Undertale's own movement and damage code runs for both. Turns alternate. Outside the dodging part the second SOUL gets no keys (obj_heart's Step works the battle menu, so a waiting friend's Z would pick options too), and when the turn passes the SOUL that becomes the game's own takes over its visibility (it's the menu cursor). Flowey's first fight (room_floweybattle) is the leader's alone. Down, Revive (MERCY, after 3 turns, 30%, then 90 frames safe from attacks) and "Who?" for items are done around the game's own menu by holding back keys.
+- Saves: `file0` / `file8` always hold the host's own things (patched after the game writes them); `coop_friends.json` holds each friend's, written at the same moment and read back on load.
+- `sans_speech.gd`: what a friend gets on their first F5 in a universe without cheats (their screen only).
+- Tests: `--unitest`, `--fronttest`, `--coopsavetest`, `--snaptest F N`, and two games linked with `--coophost PORT` / `--coopjoin IP:PORT` (`--coopbot`, `--matehp`, `--cooplog`); all are in `scripts\check.ps1` (with `-Full`, also the story walkthrough with a friend joined, as far as Napstablook).
+- Aimed attacks: while dodging, code that reads "the SOUL" gets one of the two by the reading instance's id (`aim_split`), except the battle's own bookkeeping objects (`aim_skip`).
+- Commands with the keys (`coop_net.gd` `send_cmd`): a friend's own-character cheats (`coop_cheats.gd`, cheats-on universes only) and their own backup copy of their character (`me.json` beside the world copy; used only when the universe has no record of them and `_implausible` finds nothing wrong). Both PCs apply them on the same frame.
+
 ## Bug reports and replays
 
 Every fight played on screen is recorded: the battle, the player's LV, the random seed

@@ -268,7 +268,9 @@ func _limit_of(l: String) -> Array:
 	# "COND within N" -> [COND, N]
 	var w := l.find(" within ")
 	if w >= 0:
-		return [l.substr(0, w), int(l.substr(w + 8))]
+		# In co-op the friend takes every other battle turn, so battles take a lot longer.
+		var mult := 6 if eng.coop != null and eng.coop.linked else 1
+		return [l.substr(0, w), int(l.substr(w + 8)) * mult]
 	return [l, LIMIT]
 
 

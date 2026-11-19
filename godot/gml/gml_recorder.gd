@@ -17,6 +17,7 @@ var _snap := Vector2.ONE       # smoothing rounds to whole screen pixels: 1 / th
 var _owners: Array = []    # [id, index of its "@owner" op] in drawing order, this frame
 var _plan := {}            # see _make_plan
 var _plan_dirty := true
+var shift := {}            # instance id -> extra offset (a friend's PC predicting its own walk)
 
 
 func clear() -> void:
@@ -51,11 +52,14 @@ func gui_begin() -> void:
 
 
 # Marks the start of one instance's drawing (called by the runtime before its Draw).
-func owner(id: int, pos: Vector2) -> void:
+# With several players (docs/MULTIPLAYER.md stage 3): `tag` is the player the drawing is
+# private to (-1: everyone's), and `anchor` the view it was drawn against when it sits on the
+# screen rather than in the room (null: in the room).
+func owner(id: int, pos: Vector2, tag := -1, anchor = null) -> void:
 	cur_pos[id] = pos
 	_plan_dirty = true
 	_owners.append([id, ops.size()])
-	ops.append(["@owner", [id]])
+	ops.append(["@owner", [id, tag, anchor]])
 
 
 # f = how far the renderer is between the last two logic frames (0..1), so movement looks
@@ -65,14 +69,21 @@ func owner(id: int, pos: Vector2) -> void:
 # sides and corners while it resizes) stay joined. Otherwise its drawing is only shifted
 # back towards where the instance was. Jumps are not smoothed. Blended pixel positions
 # move in whole pixels, keeping the current frame's sub-pixel part, like the shift does.
-func replay(canvas, f := 1.0) -> void:
-	var v := view
+#
+# who >= 0 draws that player's screen: other players' private drawing is left out, and the
+# picture follows `pview` (that player's view this logic frame; `pprev` the one before).
+func replay(canvas, f := 1.0, who := -1, pview = null, pprev = null) -> void:
+	var cur: Vector2 = view if pview == null else pview
+	var was: Vector2 = prev_view if pprev == null else pprev
+	var v := cur
 	var sc := view_scale
-	if f < 1.0 and sc != Vector2.ONE and view != prev_view and (view - prev_view).length() <= JUMP:
+	if f < 1.0 and sc != Vector2.ONE and cur != was and (cur - was).length() <= JUMP:
 		# The view follows the player: smoothed like the instances, in whole screen pixels.
 		_snap = sc
-		v = view - _px((view - prev_view) * (1.0 - f))
+		v = cur - _px((cur - was) * (1.0 - f))
 	var base := -v
+	var room_base := base
+	var skip := false
 	var offset := base
 	_snap = sc
 	var blend: Array = []    # previous frame's ops for the current segment, when blending
@@ -86,6 +97,15 @@ func replay(canvas, f := 1.0) -> void:
 		var op: Array = ops[i]
 		var name: String = op[0]
 		if name == "@owner":
+			var meta: Array = op[1]
+			skip = who >= 0 and meta.size() > 1 and int(meta[1]) >= 0 and int(meta[1]) != who
+			if skip:
+				i += 1
+				continue
+			# On the screen, not in the room: where it was against the view it was drawn for.
+			base = room_base if meta.size() < 3 or meta[2] == null else room_base - (meta[2] - cur)
+			if not shift.is_empty():
+				base += shift.get(meta[0], Vector2.ZERO)
 			offset = base
 			blend = []
 			if f < 1.0:
@@ -99,11 +119,16 @@ func replay(canvas, f := 1.0) -> void:
 			i += 1
 			continue
 		if name == "@gui":
+			skip = false
+			room_base = Vector2.ZERO
 			base = Vector2.ZERO
 			offset = base
 			sc = Vector2.ONE
 			blend = []
 			canvas.draw_set_transform(offset)
+			i += 1
+			continue
+		if skip:
 			i += 1
 			continue
 		var args: Array = op[1]

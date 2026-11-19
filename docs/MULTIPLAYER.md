@@ -238,12 +238,53 @@ test runs (0.8 s) are the test bot's path finding, not the game; the game's own 
 
 Known gaps, by the stage that closes them:
 
-- Every player sees player 1's view on this PC, including player 2's text and menu (stage 3).
 - A door used by any player takes everyone to the next room; battles take everyone out of the
   overworld (stages 5, 6, 8).
 - World objects see player 1 as "the player": random encounters count player 1's steps, story
   triggers watch player 1 (stage 6).
-- Each player's own End Step moves the shared background layers (`obj_backgrounder_parent`) to
-  their own camera; the last one wins (stage 3 draws each screen separately).
 - Saving and loading still store one player (stage 6).
-- The 0.4 co-op (lockstep, leader swap) is still what Host Game / Join use (stage 4 replaces it).
+
+### Stage 3: screens (done 2026-11-19)
+
+- Each player's screen is drawn from their own camera. The recorder marks every instance's
+  drawing with whose it is (`@owner [id, player, anchor]`); a player's screen leaves out other
+  players' text boxes, faces and menus (`gml_recorder.gd` replay with `who`).
+- Drawing placed against the view (faders, the menu, text boxes: any object whose Draw reads
+  `view_xview`/`view_yview`) is moved to each player's own view, so a room fade covers every
+  screen however far apart the cameras are.
+- The room's background colour covers the whole room when several players play.
+- Sounds played for one player (short sounds in their context: their text's voice, their menu)
+  are theirs; music and longer sounds are everyone's. Other players' sounds are silent on the
+  host (a muted bus) and sent to their PC.
+- Tests: `--viewas K` shows player K's screen; the `sign` check counts what each screen draws
+  (the text box only on player 2's, the same everywhere once it closes).
+
+Left for later areas: the parallax background objects (`obj_backgrounder_*`: Snowdin town and
+its bridges, Waterfall's dock, the Core, the last corridor) still follow one camera. None are
+in the Ruins.
+
+### Stage 4: network (working 2026-11-19; not yet behind Host Game / Join)
+
+`godot/mp_net.gd`. The host runs the game; a friend's PC sends its keys and draws what it gets.
+
+- Frames: the recorder's commands for that player's screen, packed (types and floats, textures
+  as numbers: sprite and frame, background, font), about 13 KB a frame before compression and
+  1 to 1.5 KB after (ENet's zstd): 30 to 45 KB/s per friend.
+- Keys: every frame's keys, sent with the last three; the host queues them so a quick tap is
+  never lost, and merges identical waiting frames so a backlog never delays later keys.
+- Your own walking is predicted: keys the host hasn't used yet move your character and camera at
+  once (3 pixels a frame); a direction the host shows blocked (a wall) isn't predicted until
+  it's let go. Measured on one PC: the host uses a friend's keys 2 frames after they're
+  pressed; at a wall the picture moves back by 3 pixels once.
+- Joining and leaving at any time: a friend who comes back under the same name gets their slot,
+  stats and items back. Version, mods and password are checked on joining. "Greg joined." /
+  "Greg left." notices on every screen.
+- Code compiles in the background while playing, so the first text box no longer stops the game
+  for 150 ms (it did in solo too).
+- Tests: `--mphost PORT [--mppw P]`, `--mpjoin IP:PORT [--mpname N] [--mppw P]`, `--netlog`
+  (prediction per frame), `--mplog N` (bytes per frame, round trip, key queue). The check suite
+  runs a friend joining, walking, reading a sign and leaving (`--mpcheck net`).
+- Host Game / Join still start the 0.4 co-op until battles work for every player (stage 8).
+
+Note for measuring: Windows slows down windowless test runs after about 15 seconds (every phase
+2.5x slower). Measure frame times with a window.

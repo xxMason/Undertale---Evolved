@@ -42,7 +42,9 @@ class Player:
 	var feed := Callable()       # returns this frame's held key codes (bots, network)
 	var overlay := {}            # their PER_PLAYER globals while someone else's are loaded
 	var inst = null              # their obj_mainchara in the current room
-	var view := Vector2.ZERO     # their camera (view 0's position)
+	var view := Vector2.ZERO     # their camera (view 0's position) this logic frame
+	var prev_view := Vector2.ZERO
+	var active := true           # false: left the game; their slot (and stats) wait for them
 
 
 var eng
@@ -78,7 +80,26 @@ func setup(e, names: Array) -> void:
 	vm.multi_players = range(list.size())
 	vm.private_objs = _family(PRIVATE_ROOTS, "obj_face_")
 	vm.multi_objs = _family(MULTI_OBJECTS, "")
+	vm.anchored_objs = _anchored()
 	vm.owners_on = list.size() > 1
+
+
+# Objects whose Draw (their own or inherited) places things relative to the view.
+func _anchored() -> Dictionary:
+	var out := {}
+	var seen := {}
+	for o in vm.obj_names.size():
+		var found: Array = vm.find_event(o, vm.EV_DRAW, 0)
+		if found.is_empty():
+			continue
+		var code: String = found[0]
+		if not seen.has(code):
+			var path: String = vm.base.path_join("code/" + code + ".gml")
+			var src := FileAccess.get_file_as_string(path) if FileAccess.file_exists(path) else ""
+			seen[code] = src.contains("view_xview") or src.contains("view_yview")
+		if seen[code]:
+			out[o] = true
+	return out
 
 
 # Object indices of the named objects and all their children (and of every object whose
@@ -102,6 +123,91 @@ func _family(roots: Array, prefix: String) -> Dictionary:
 
 func count() -> int:
 	return list.size()
+
+
+func active_count() -> int:
+	var n := 0
+	for p in list:
+		if p.active:
+			n += 1
+	return n
+
+
+# A friend joins mid-game (stage 4). Someone who left and comes back under the same name
+# gets their own slot, stats and items back; anyone new starts as a copy of the primary
+# player. Returns their index, or -1 when the game is full.
+func add_player(pname: String) -> int:
+	var slot = null
+	for p in list:
+		if not p.active and p.name == pname:
+			slot = p
+			break
+	if slot == null:
+		for p in list:
+			if not p.active and slot == null:
+				slot = p
+		if slot != null:
+			slot.overlay = {}
+	if slot == null:
+		if list.size() >= MAX:
+			return -1
+		slot = Player.new()
+		slot.index = list.size()
+		slot.keys = Keys.new()
+		list.append(slot)
+		vm.player_insts.append({})
+	if slot.overlay.is_empty():
+		_save(loaded)
+		slot.overlay = list[primary].overlay.duplicate(true) if loaded != primary else _snapshot()
+		# Their own text and menu start closed.
+		slot.overlay["interact"] = 0.0
+		slot.overlay["menuno"] = -1.0
+	slot.name = pname
+	slot.active = true
+	slot.feed = Callable()
+	_refresh()
+	bind()
+	return slot.index
+
+
+# A friend leaves: their character goes, their text boxes close, whatever they were busy
+# with is nobody's again. Their slot keeps their stats for when they come back.
+func remove_player(i: int) -> void:
+	if i < 0 or i >= list.size() or i == primary or not list[i].active:
+		return
+	var p: Player = list[i]
+	if loaded == i:
+		switch_to(primary)
+	p.active = false
+	p.feed = Callable()
+	for inst in vm.instances:
+		if inst.dead or inst.owner != i:
+			continue
+		if inst.obj == obj_main or vm.private_objs.has(inst.obj):
+			inst.dead = true
+		else:
+			inst.owner = -1
+	vm.inst_version += 1
+	vm.player_insts[i] = {}
+	p.inst = null
+	_refresh()
+
+
+func _snapshot() -> Dictionary:
+	var out := {}
+	for k in PER_PLAYER:
+		if vm.globals.has(k):
+			out[k] = vm.globals[k].duplicate(true) if vm.globals[k] is Array else vm.globals[k]
+	return out
+
+
+func _refresh() -> void:
+	var on: Array = []
+	for p in list:
+		if p.active:
+			on.append(p.index)
+	vm.multi_players = on
+	vm.owners_on = list.size() > 1
 
 
 # Everyone else starts as a copy of the primary player (same HP, items, text state...).
@@ -188,7 +294,7 @@ func set_value(i: int, k: String, val) -> void:
 # control_update and arrow keys: held, and not just released).
 func before_step() -> void:
 	for p in list:
-		if p.index == primary:
+		if p.index == primary or not p.active:
 			continue
 		p.keys.poll(p.feed.call() if p.feed.is_valid() else [])
 		_input(p)
@@ -237,7 +343,18 @@ func after_step() -> void:
 				keep.append(i)
 		vm.claimed = keep
 	bind()
+	# Each player's camera follows their own character the way the room's view does for
+	# player 1 (borders, speed, kept inside the room): the room's view object means their
+	# own instance in their context.
+	var keep_ctx: int = vm.ctx_owner
 	for p in list:
+		if p.index == primary or not p.active:
+			continue
+		switch_to(p.index)
+		eng.bi.update_views()
+	switch_to(keep_ctx)
+	for p in list:
+		p.prev_view = p.view
 		p.view = value(p.index, "view", Vector2.ZERO) if p.index != loaded else Vector2(float(eng.bi.view_xview[0]), float(eng.bi.view_yview[0]))
 
 
@@ -268,6 +385,8 @@ func bind() -> void:
 		if i.owner == primary or (main == null and i.owner < 0):
 			main = i
 	for p in list:
+		if not p.active:
+			continue
 		var cur = vm.player_insts[p.index].get(obj_main)
 		if cur != null and not cur.dead and cur.owner == p.index and vm.instances.has(cur):
 			p.inst = cur

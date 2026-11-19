@@ -27,6 +27,7 @@ const Universes = preload("res://universes.gd")
 const CoopState = preload("res://coop_state.gd")
 const CoopNet = preload("res://coop_net.gd")
 const CoopPartner = preload("res://coop_partner.gd")
+const MpNet = preload("res://mp_net.gd")
 const SansSpeech = preload("res://sans_speech.gd")
 const CoopCheats = preload("res://coop_cheats.gd")
 const World = preload("res://gml/gml_world.gd")
@@ -255,6 +256,8 @@ func _ready() -> void:
 	coop = CoopNet.new()
 	add_child(coop)
 	coop.setup(self)
+	mpnet = MpNet.new()
+	mpnet.setup(self)
 	i = args.find("--tps")
 	if i >= 0 and i + 1 < args.size():
 		Engine.physics_ticks_per_second = int(args[i + 1])     # tests: run co-op faster
@@ -323,9 +326,26 @@ func _ready() -> void:
 		return
 	# Co-op tests: --coophost PORT (hosts the game, booting as --game does) or --coopjoin
 	# IP:PORT (joins it). Both play in real time (--tps speeds that up) until --frames.
+	# Multiplayer tests (stage 4): --mphost PORT [--mppw PASSWORD] hosts the game, booting as
+	# --game does; --mpjoin IP:PORT [--mpname NAME] [--mppw PASSWORD] joins it. Real time.
+	var mh := args.find("--mphost")
+	var mj := args.find("--mpjoin")
 	i = args.find("--coophost")
 	var j := args.find("--coopjoin")
-	if i >= 0 and i + 1 < args.size():
+	var pwi := args.find("--mppw")
+	var mpw: String = args[pwi + 1] if pwi >= 0 and pwi + 1 < args.size() else ""
+	if mh >= 0 and mh + 1 < args.size():
+		start_game()
+		var why: String = mpnet.start_host(int(args[mh + 1]), mpw)
+		if why != "":
+			print("NET error: " + why)
+			get_tree().quit(2)
+			return
+	elif mj >= 0 and mj + 1 < args.size():
+		var hp: PackedStringArray = args[mj + 1].split(":")
+		var ni := args.find("--mpname")
+		net_join(hp[0], int(hp[1]) if hp.size() > 1 else MpNet.PORT, args[ni + 1] if ni >= 0 and ni + 1 < args.size() else "Friend", mpw)
+	elif i >= 0 and i + 1 < args.size():
 		var why: String = coop.start_host(int(args[i + 1]))
 		if why != "":
 			print("COOP error: " + why)
@@ -1180,7 +1200,7 @@ func _game_shot_check() -> void:
 		var f := frames
 		await RenderingServer.frame_post_draw
 		DirAccess.make_dir_recursive_absolute(dir)
-		var nm: String = _bot_shot_names.get(f, vm.room_names[vm.room])
+		var nm: String = _bot_shot_names.get(f, vm.room_names[vm.room] if vm.room >= 0 else "net")
 		get_viewport().get_texture().get_image().save_png(dir.path_join("f%05d_%s.png" % [f, nm]))
 
 
@@ -1200,6 +1220,12 @@ func _game_jump() -> void:
 				vm.globals[nm] = vm._arr_set(vm.globals.get(nm), int(p[0].get_slice(".", 1)), -1, float(p[1]))
 			else:
 				vm.globals[p[0]] = float(p[1])
+			# The story state is every player's: the others take their own copy of the new
+			# value the next time their globals are loaded.
+			if mp != null:
+				for pl in mp.list:
+					if pl.index != mp.loaded:
+						pl.overlay.erase(p[0].get_slice(".", 0))
 	var r := _jump_to
 	_jump_to = -1
 	vm.load_room(r)
@@ -1233,6 +1259,20 @@ func _game_frame() -> void:
 	var ml := OS.get_cmdline_user_args().find("--mplog")
 	if ml >= 0 and frames % int(OS.get_cmdline_user_args()[ml + 1]) == 0:
 		print("MP f=%d %s worst=%dus avg=%dus | %s" % [frames, vm.room_names[vm.room], _mp_worst, _mp_sum / maxi(1, _mp_n), mp.log_line() if mp != null else "solo"])
+		if mpnet != null and mpnet.is_host():
+			print("NET f=%d %s" % [frames, mpnet.status_line()])
+		if vm.prof != null:
+			# With --prof: where the time went since the last line (microseconds per frame).
+			var d: Array = []
+			for k in vm.prof:
+				if vm.prof[k] is int:
+					var dv: int = vm.prof[k] - int(_mp_prof0.get(k, 0))
+					if dv > 0:
+						d.append([dv / maxi(1, _mp_n), k])
+			d.sort()
+			d.reverse()
+			print("MP   prof: %s" % str(d.slice(0, 10)))
+			_mp_prof0 = vm.prof.duplicate()
 		_mp_worst = 0
 		_mp_sum = 0
 		_mp_n = 0
@@ -1587,6 +1627,12 @@ func _physics_process(_delta: float) -> void:
 				n = int(_speed_acc)
 				_speed_acc -= n
 			step_once = false
+			# Multiplayer, a friend's PC: no game here, only the host's picture (mp_net.gd).
+			if screen == Screen.GAME and net_client:
+				_net_client_tick()
+				return
+			if screen == Screen.GAME and mpnet != null and mpnet.is_host():
+				mpnet.service()
 			# Co-op: frames run in lockstep with the other PC (coop_net.gd).
 			if screen == Screen.GAME and coop != null and coop.active():
 				# A friend leaves by holding Esc for a second (the game's own Esc is the host's).
@@ -1606,6 +1652,8 @@ func _physics_process(_delta: float) -> void:
 					_game_frame()
 				else:
 					break
+			if screen == Screen.GAME and mpnet != null and mpnet.is_host():
+				mpnet.after_frames()
 
 
 var perf_draw_us := 0
@@ -1927,6 +1975,10 @@ var _hitch_draw := 0
 
 func _process(_delta: float) -> void:
 	queue_redraw()
+	# Multiplayer: take in what has arrived on every displayed frame, not only on game frames,
+	# so keys and pictures never wait a whole frame for it.
+	if mpnet != null and mpnet.active():
+		mpnet.poll()
 	# --hitchlog: report every displayed frame that took over 25 ms, with the game logic
 	# and drawing time spent in it (the rest is Godot's rendering and waiting).
 	if screen == Screen.BATTLE and OS.get_cmdline_user_args().has("--hitchlog"):
@@ -1939,6 +1991,10 @@ func _process(_delta: float) -> void:
 	# Compile the game's translated code in the background while the menus are idle.
 	if vm != null and (screen == Screen.LIST or screen == Screen.RESULT):
 		vm.warm_step(6000)
+	elif vm != null and screen == Screen.GAME and not net_client and last_logic_us < 12000:
+		# While playing, a little at a time between frames, so the first text box or battle
+		# doesn't stop the game for a moment while its code is compiled.
+		vm.warm_step(2500)
 	if menushot != "" and (screen == Screen.LIST or screen == Screen.FRONT):
 		_menushot_wait += 1
 		# The title screen and Join wait 3 s, so games on the network have been heard.
@@ -1975,7 +2031,18 @@ func _draw() -> void:
 			_text(40, 260, "[Z] Back to the list", 8421504, "fnt_maintext")
 		Screen.BATTLE, Screen.GAME:
 			var td := Time.get_ticks_usec()
-			rec.replay(self, Engine.get_physics_interpolation_fraction() if smooth and not paused else 1.0)
+			var rf := Engine.get_physics_interpolation_fraction() if smooth and not paused else 1.0
+			if mp != null and screen == Screen.GAME:
+				# This PC's player's screen: their camera, without the others' text and menus.
+				var me: int = clampi(view_as, 0, mp.count() - 1)
+				if me == mp.primary:
+					rec.replay(self, rf, me)
+				else:
+					rec.replay(self, rf, me, mp.list[me].view, mp.list[me].prev_view)
+			else:
+				rec.replay(self, rf)
+			if not _notices.is_empty() and screen == Screen.GAME:
+				_draw_notices()
 			perf_draw_us += Time.get_ticks_usec() - td
 			perf_draws += 1
 			perf_draw_max = maxi(perf_draw_max, Time.get_ticks_usec() - td)
@@ -2860,6 +2927,8 @@ func world_hash() -> int:
 # ones driven by --pfeed. Player 1 is this PC's keyboard (or the bot).
 var mp = null
 var _mpcheck = null    # mp_tests.gd, with --mpcheck
+var view_as := 0       # whose screen this PC shows (--viewas K, tests: player K, from 1)
+var _mp_prof0 := {}
 var _mp_worst := 0     # slowest game frame (logic and drawing, not the test bot) since the last --mplog line
 var _mp_sum := 0
 var _mp_n := 0
@@ -2884,8 +2953,86 @@ func _mp_frame_start() -> void:
 				if k > 0 and k < mp.count():
 					mp.list[k].feed = mp.make_feed(part.get_slice("=", 1), k)
 		print("MP %d players" % mp.count())
-		var ci := args.find("--mpcheck")
-		if ci >= 0:
-			_mpcheck = load("res://mp_tests.gd").new()
-			_mpcheck.setup(self, String(args[ci + 1]))
+		var va := args.find("--viewas")
+		if va >= 0:
+			view_as = int(args[va + 1]) - 1
+	var ci := args.find("--mpcheck")
+	if ci >= 0 and _mpcheck == null:
+		_mpcheck = load("res://mp_tests.gd").new()
+		_mpcheck.setup(self, String(args[ci + 1]))
 	mp.before_step()
+
+
+
+# ---------------------------------------------------------------- multiplayer network (stage 4)
+
+var mpnet = null           # mp_net.gd
+var net_client := false    # this PC shows the host's game instead of running one
+var net_frame := 0         # the host's frame number of the picture shown
+var _notices: Array = []   # [text, until ms]: "Greg joined." and the like
+
+
+func net_name() -> String:
+	var n := String(player().get("name", ""))
+	var ni := OS.get_cmdline_user_args().find("--mpname")
+	if ni >= 0 and ni + 1 < OS.get_cmdline_user_args().size():
+		n = OS.get_cmdline_user_args()[ni + 1]
+	return n if n != "" else "Host"
+
+
+func net_join(ip: String, port: int, pname: String, pw: String) -> void:
+	_reset_runtime()
+	rec.clear()
+	frames = 0
+	net_client = true
+	screen = Screen.GAME
+	mpnet.join(ip, port, pname, pw)
+
+
+func mp_net_joined(_index: int, _name: String) -> void:
+	pass
+
+
+func mp_net_ended(why: String) -> void:
+	if why != "":
+		mp_notice(why)
+	print("NET ended: " + why)
+	if DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--mpjoin"):
+		get_tree().quit()
+
+
+func mp_notice(text: String) -> void:
+	_notices.append([text, Time.get_ticks_msec() + 4000])
+	while _notices.size() > 4:
+		_notices.pop_front()
+	print("NOTICE " + text)
+
+
+func _net_client_tick() -> void:
+	frames += 1
+	mpnet.client_tick(coop_local_keys(frames))
+	var nl := OS.get_cmdline_user_args().find("--mplog")
+	if nl >= 0 and frames % int(OS.get_cmdline_user_args()[nl + 1]) == 0:
+		print("NET f=%d host_f=%d %s" % [frames, net_frame, mpnet.status_line()])
+	if not _game_shots.is_empty():
+		_game_shot_check()
+	queue_redraw()
+	if frames >= frame_cap and (DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--gameshot")):
+		mpnet.leave()
+		get_tree().quit()
+
+
+# Notices in the top left corner, in the game's own font, fading out.
+func _draw_notices() -> void:
+	var now := Time.get_ticks_msec()
+	var y := 6.0
+	for n in _notices:
+		var left: int = int(n[1]) - now
+		if left <= 0:
+			continue
+		var t := String(n[0])
+		var w := 16.0 * t.length() + 16.0
+		draw_rect(Rect2(4, y, w, 30), Color(0, 0, 0, 0.8))
+		_text(12, y + 4, t, 16777215, "fnt_main")
+		y += 34.0
+

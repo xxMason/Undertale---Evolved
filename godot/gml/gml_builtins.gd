@@ -84,6 +84,7 @@ func texture(spr: int, frame: int) -> Texture2D:
 		var img := Image.load_from_file(path)
 		if img != null:
 			tex = ImageTexture.create_from_image(img)
+			tex.set_meta("net", (spr << 16) | f)    # its number on the network (mp_net.gd)
 	tex_cache[key] = tex
 	return tex
 
@@ -110,6 +111,7 @@ func bg_texture(bg: int) -> Texture2D:
 		var path: String = vm.base.path_join("backgrounds/%s.png" % vm.bg_names[bg])
 		if FileAccess.file_exists(path):
 			tex = ImageTexture.create_from_image(Image.load_from_file(path))
+			tex.set_meta("net", (1 << 30) | bg)
 	bg_cache[bg] = tex
 	return tex
 
@@ -131,6 +133,7 @@ func font(idx: int) -> Dictionary:
 					glyphs[int(p[0])] = g
 					line_h = maxi(line_h, g[3])
 			f = {"tex": ImageTexture.create_from_image(Image.load_from_file(png)), "glyphs": glyphs, "line_h": line_h}
+			f["tex"].set_meta("net", (2 << 30) | idx)
 	font_cache[idx] = f
 	return f
 
@@ -461,6 +464,15 @@ func _cleanup_players() -> void:
 	players = keep
 
 
+static func _muted_bus() -> String:
+	if AudioServer.get_bus_index("mp_muted") < 0:
+		AudioServer.add_bus()
+		var b := AudioServer.bus_count - 1
+		AudioServer.set_bus_name(b, "mp_muted")
+		AudioServer.set_bus_mute(b, true)
+	return "mp_muted"
+
+
 func play_sound(snd: int, loop: bool) -> float:
 	if audio_root == null:
 		return -1.0
@@ -488,6 +500,11 @@ func play_sound(snd: int, loop: bool) -> float:
 	var entry := {"player": pl, "sound": snd, "id": id, "paused": false, "gain": 1.0,
 		"loop": loop, "t0": vm.step_no, "pt": 0, "pa": -1,
 		"steps": ceili(stream.get_length() * 30.0 / pl.pitch_scale)}
+	# With several players: a short sound played for one player (their text's voice, their
+	# menu's blips) is heard by them only; music and longer sounds are everyone's.
+	entry["owner"] = vm.ctx_owner if (vm.owners_on and vm.ctx_owner >= 0 and not loop and stream.get_length() < 6.0) else -1
+	if int(entry["owner"]) >= 0 and int(entry["owner"]) != vm.primary_owner:
+		pl.bus = _muted_bus()    # someone else's: silent on this PC, sent to theirs (mp_net.gd)
 	_apply_volume(entry)
 	pl.play()
 	players.append(entry)
@@ -2892,7 +2909,11 @@ func draw_backgrounds(fg: bool) -> void:
 		var vy: float = room_arr["view_yview"][0] if views_on else 0.0
 		var vw: float = room_arr["view_wview"][0] if views_on else float(vm.room_width)
 		var vh: float = room_arr["view_hview"][0] if views_on else float(vm.room_height)
-		canvas.draw_rect(Rect2(vx, vy, maxf(vw, vm.room_width), maxf(vh, vm.room_height)), col(background_color))
+		if vm.owners_on:
+			# Every player's camera is somewhere in the room, not only this one's.
+			canvas.draw_rect(Rect2(-vw, -vh, vm.room_width + 2.0 * vw, vm.room_height + 2.0 * vh), col(background_color))
+		else:
+			canvas.draw_rect(Rect2(vx, vy, maxf(vw, vm.room_width), maxf(vh, vm.room_height)), col(background_color))
 	for k in 8:
 		if float(room_arr["background_visible"][k]) < 0.5 or (float(room_arr["background_foreground"][k]) >= 0.5) != fg:
 			continue

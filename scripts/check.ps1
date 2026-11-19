@@ -35,6 +35,17 @@ $traces = @(
     @{ g = 92; f = 700; file = 'tests\trace_g92_undying.txt' },
     @{ g = 55; f = 600; file = 'tests\trace_g55_moldbygg.txt' }
 )
+# Stage 4: a friend joins over the network (this PC, port 7791), walks, reads the sign and
+# leaves; the host checks what happened in its game.
+$nh = Join-Path $env:TEMP 'ube_check_net_host.txt'
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_net')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '400', '--mphost', '7791', '--mpname', 'Kyle', '--mpcheck', 'net', '--tps', '60') -RedirectStandardOutput $nh -RedirectStandardError "$nh.err" -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$no = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7791 --mpname Greg --frames 240 --tps 60 --press '20:39x7,30:38x25,70:90x2,110:90x2,150:90x2,190:90x2' 2>&1 | ForEach-Object { "$_" }
+if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
+$nho = @(Get-Content $nh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
+$nok = ("$nho" -match 'MPCHECK net done, 0 failed') -and -not ("$nho $no" -match 'SCRIPT ERROR')
+Say $nok 'network: a friend joins, walks, reads and leaves' $(if ($nok) { '' } else { (@($nho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($no | Where-Object { $_ -match 'ERROR' }) -join '; ') })
+
 if ($Full) {
     foreach ($f in Get-ChildItem (Join-Path $root 'logs\trace') -Filter 'real_g*_s42_lv20_f1500.txt' -ErrorAction SilentlyContinue) {
         $g = [int]($f.Name -replace '^real_g(\d+)_.*', '$1')

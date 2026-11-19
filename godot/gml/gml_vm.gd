@@ -129,6 +129,10 @@ var primary_owner := 0
 # variables (Inst.pv), so several players can have it open at once.
 var multi_objs := {}             # object index -> true
 var multi_players: Array = []    # player indices
+# Drawing (stage 3): world objects whose Draw places things relative to the view (faders,
+# text boxes, HUD) are "anchored": the recorder keeps the view they were drawn against, so on
+# another player's screen they stay where they were on screen rather than in the room.
+var anchored_objs := {}          # object index -> true
 var _in_multi = null
 var game_end_requested := false
 var game_restart_requested := false
@@ -875,7 +879,7 @@ func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, oth
 	# unowned one keeps the context of whatever ran it (the world's, for the frame's passes).
 	var oc := ctx_owner
 	if owners_on and inst.owner < 0 and multi_objs.has(inst.obj) and _in_multi != inst:
-		_run_multi(inst, code, other)
+		_run_multi(inst, code, other, type)
 	else:
 		var busy0 = null
 		if owners_on:
@@ -908,12 +912,14 @@ func _run_event(inst: Inst, code: String, def_obj: int, type: int, sub: int, oth
 
 # A per-player object's event, once for each player with their own variables. Afterwards
 # the instance shows the primary player's copy.
-func _run_multi(inst: Inst, code: String, other) -> void:
+# Its drawing is recorded as one segment per player, private to them.
+func _run_multi(inst: Inst, code: String, other, type := -1) -> void:
 	var oc := ctx_owner
 	var keep = _in_multi
 	_in_multi = inst
 	if inst.pv == null:
 		inst.pv = {}
+	var rec = builtins.canvas if type == EV_DRAW and builtins.canvas != null and builtins.canvas.has_method("owner") else null
 	for p in multi_players:
 		if inst.dead:
 			break
@@ -922,6 +928,8 @@ func _run_multi(inst: Inst, code: String, other) -> void:
 		inst.v = inst.pv[p]
 		if p != ctx_owner:
 			owner_switch.call(p)
+		if rec != null:
+			rec.owner(-(inst.id * 8 + p + 1), Vector2(float(inst.v["x"]), float(inst.v["y"])), p, null)
 		run_code(code, inst, other if other != null else inst)
 		inst.pv[p] = inst.v
 	if inst.pv.has(primary_owner):
@@ -1717,7 +1725,13 @@ func draw_frame() -> void:
 		if i.dead or float(i.v["visible"]) < 0.5:
 			continue
 		if rec != null:
-			rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])))
+			if owners_on:
+				var anchor = null
+				if i.owner < 0 and anchored_objs.has(i.obj):
+					anchor = Vector2(float(builtins.view_xview[0]), float(builtins.view_yview[0]))
+				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])), i.owner if (i.owner >= 0 and private_objs.has(i.obj)) else -1, anchor)
+			else:
+				rec.owner(i.id, Vector2(float(i.v["x"]), float(i.v["y"])))
 		var n0 := instances.size()
 		if not perform_event(i, EV_DRAW, 0, null):
 			builtins.draw_self(i)

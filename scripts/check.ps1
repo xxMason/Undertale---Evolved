@@ -45,6 +45,16 @@ if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
 $nho = @(Get-Content $nh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
 $nok = ("$nho" -match 'MPCHECK net done, 0 failed') -and -not ("$nho $no" -match 'SCRIPT ERROR')
 Say $nok 'network: a friend joins, walks, reads and leaves' $(if ($nok) { '' } else { (@($nho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($no | Where-Object { $_ -match 'ERROR' }) -join '; ') })
+# The pause menu in co-op: the game goes on while only the host has it open and stops once
+# the friend opens theirs too (--mppause), then goes on when they close it.
+$ph = Join-Path $env:TEMP 'ube_check_pause_host.txt'
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_pause')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '1500', '--mphost', '7792', '--mpname', 'Kyle', '--mpcheck', 'pause', '--tps', '60') -RedirectStandardOutput $ph -RedirectStandardError "$ph.err" -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$po = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7792 --mpname Greg --frames 400 --tps 60 --mppause '60:120' 2>&1 | ForEach-Object { "$_" }
+if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
+$pho = @(Get-Content $ph -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
+$pok = ("$pho" -match 'MPCHECK pause done, 0 failed') -and -not ("$pho $po" -match 'SCRIPT ERROR')
+Say $pok 'pause: co-op only stops when everyone is paused' $(if ($pok) { '' } else { (@($pho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($po | Where-Object { $_ -match 'ERROR' }) -join '; ') })
 
 if ($Full) {
     foreach ($f in Get-ChildItem (Join-Path $root 'logs\trace') -Filter 'real_g*_s42_lv20_f1500.txt' -ErrorAction SilentlyContinue) {

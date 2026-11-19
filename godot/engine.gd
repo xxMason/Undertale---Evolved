@@ -28,6 +28,7 @@ const CoopState = preload("res://coop_state.gd")
 const CoopNet = preload("res://coop_net.gd")
 const CoopPartner = preload("res://coop_partner.gd")
 const MpNet = preload("res://mp_net.gd")
+const PauseMenu = preload("res://pause_menu.gd")
 const MpRooms = preload("res://mp_rooms.gd")
 const MpSaves = preload("res://mp_saves.gd")
 const MpUi = preload("res://mp_ui.gd")
@@ -167,6 +168,7 @@ var game_speed := 1.0          # debug menu: game frames per physics tick
 var _speed_acc := 0.0
 var settings: Dictionary = {}
 var front = null               # title screen, universes, settings (front_menu.gd)
+var pause = null               # the game's pause menu, Esc (pause_menu.gd)
 var coop = null                # LAN co-op link (coop_net.gd)
 var coop_vm_keys = null        # co-op: the keys the game itself gets this frame
 var coop_partner_keys: Array = []   # co-op: the other player's keys this frame
@@ -258,6 +260,8 @@ func _ready() -> void:
 		_save_settings()
 	front = FrontMenu.new()
 	front.setup(self)
+	pause = PauseMenu.new()
+	pause.setup(self)
 	coop = CoopNet.new()
 	add_child(coop)
 	coop.setup(self)
@@ -350,6 +354,9 @@ func _ready() -> void:
 		var hp: PackedStringArray = args[mj + 1].split(":")
 		var ni := args.find("--mpname")
 		net_join(hp[0], int(hp[1]) if hp.size() > 1 else MpNet.PORT, args[ni + 1] if ni >= 0 and ni + 1 < args.size() else "Friend", mpw)
+		var mpp := args.find("--mppause")
+		if mpp >= 0 and mpp + 1 < args.size():
+			_mp_pause_test(args[mpp + 1])
 	elif i >= 0 and i + 1 < args.size():
 		var why: String = coop.start_host(int(args[i + 1]))
 		if why != "":
@@ -366,6 +373,8 @@ func _ready() -> void:
 		start_battle(auto_index)
 	elif args.has("--game"):
 		start_game()
+		if args.has("--pausetest"):
+			_pause_test()
 		if DisplayServer.get_name() == "headless":
 			# Tests: as fast as possible, not at 30 frames a second.
 			if args.has("--coopsavetest"):
@@ -427,13 +436,111 @@ func play_universe(u: Dictionary) -> void:
 	start_game()
 
 
-func host_universe(u: Dictionary, port := CoopNet.PORT) -> void:
-	var why: String = coop.start_host(port)
+# Host Game: plays the universe and opens it to friends (mp_net.gd), up to 4 players. pw: ""
+# lets anyone on the network in.
+func host_universe(u: Dictionary, pw := "", port := MpNet.PORT) -> void:
+	play_universe(u)
+	var why: String = mpnet.start_host(port, pw)
 	if why != "":
 		_toast(why, 6000)
-	play_universe(u)
-	if why == "":
-		_toast("Hosting %s. Friends on your network can join now." % Universes.display_name(u), 5000)
+	else:
+		_toast("Hosting %s. Friends on your network can join now%s." % [Universes.display_name(u), " (with the password)" if pw != "" else ""], 5000)
+
+
+# --pausetest (with --game, a window): opens the pause menu with Esc, checks the game stops,
+# looks at Settings, resumes, then leaves to the title. Prints PAUSETEST lines and screenshots
+# into --shotsdir.
+func _pause_test() -> void:
+	var dir: String = OS.get_cmdline_user_args()[OS.get_cmdline_user_args().find("--shotsdir") + 1] if OS.get_cmdline_user_args().has("--shotsdir") else "user://pausetest"
+	var press := func(code: Key) -> void:
+		for down in [true, false]:
+			var e := InputEventKey.new()
+			e.keycode = code
+			e.physical_keycode = code
+			e.pressed = down
+			Input.parse_input_event(e)
+			await get_tree().physics_frame
+	var shot := func(nm: String) -> void:
+		await RenderingServer.frame_post_draw
+		DirAccess.make_dir_recursive_absolute(dir)
+		get_viewport().get_texture().get_image().save_png(dir.path_join(nm + ".png"))
+	while frames < 90:
+		await get_tree().physics_frame
+	await press.call(KEY_ESCAPE)
+	var f0 := frames
+	for k in 30:
+		await get_tree().physics_frame
+	print("PAUSETEST %s the game stops (frames %d -> %d), menu open %s" % ["ok  " if frames == f0 and pause.open else "FAIL", f0, frames, pause.open])
+	await shot.call("pause_main")
+	await press.call(KEY_DOWN)
+	await press.call(KEY_DOWN)
+	await press.call(KEY_DOWN)
+	await press.call(KEY_Z)
+	await shot.call("pause_settings")
+	print("PAUSETEST %s Settings opens (page %s)" % ["ok  " if pause.page == "settings" else "FAIL", pause.page])
+	await press.call(KEY_X)
+	await press.call(KEY_ESCAPE)
+	for k in 30:
+		await get_tree().physics_frame
+	print("PAUSETEST %s Esc resumes (open %s, frames %d)" % ["ok  " if not pause.open and frames > f0 else "FAIL", pause.open, frames])
+	await press.call(KEY_ESCAPE)
+	await press.call(KEY_DOWN)
+	await press.call(KEY_Z)
+	await shot.call("pause_leave")
+	print("PAUSETEST %s Leave asks first (page %s)" % ["ok  " if pause.page == "confirm" else "FAIL", pause.page])
+	await press.call(KEY_LEFT)
+	await press.call(KEY_Z)
+	for k in 10:
+		await get_tree().physics_frame
+	print("PAUSETEST %s back at the title (screen %d)" % ["ok  " if screen == Screen.FRONT else "FAIL", screen])
+	get_tree().quit()
+
+
+# --mppause A:B (a friend's PC, tests): opens the pause menu A physics frames after joining
+# and closes it B frames later.
+func _mp_pause_test(spec: String) -> void:
+	var ab := spec.split(":")
+	while mpnet == null or mpnet.state != "playing":
+		await get_tree().physics_frame
+	for k in int(ab[0]):
+		await get_tree().physics_frame
+	pause.toggle()
+	print("NET paused")
+	for k in int(ab[1]) if ab.size() > 1 else 60:
+		await get_tree().physics_frame
+	pause.close()
+	print("NET resumed")
+
+
+# The game here ended (back to the title): no more network or other players.
+func mp_stop() -> void:
+	if pause != null:
+		pause.open = false
+	if mpnet != null:
+		mpnet.stop()
+	net_client = false
+	mp_ui_state = {}
+	if mp != null:
+		vm.owners_on = false
+		vm.party_on = false
+		vm.scene_owner = -1
+		vm.multi_players = []
+		vm.player_insts = []
+		vm.claimed = []
+		vm.inst_keys = {}
+		vm.event_gate = Callable()
+		vm.party_draw = Callable()
+		vm.party_name = Callable()
+		vm.gate_objs = {}
+		vm.faded_objs = {}
+		vm.aim_obj = -1
+		vm.ctx_owner = -1
+	mp = null
+	mprooms = null
+	mpsaves = null
+	mpui = null
+	mpscenes = null
+	mpbattles = null
 
 
 # ---------------------------------------------------------------- co-op (coop_net.gd calls these)
@@ -496,6 +603,8 @@ func coop_local_keys(f: int) -> Array:
 				held.append(p[1])
 		return held
 	if debug != null and debug.open:
+		return []
+	if pause != null and pause.open:
 		return []
 	return keys.sample_local()
 
@@ -1251,7 +1360,12 @@ func _game_frame() -> void:
 	var gk = coop_vm_keys if coop_vm_keys != null else _game_auto_keys()
 	if gk == null and debug != null and debug.open:
 		gk = []     # the debug menu has the keyboard
+	if pause != null and pause.open:
+		gk = []     # so has the pause menu
 	keys.poll(gk)
+	# Esc is the pause menu's, never the game's (Undertale ends the game when it's held).
+	if not coop.active():
+		keys.now.erase(27)
 	_mp_frame_start()
 	# With several players the world steps with its lead's keys (in a shared battle, whoever's
 	# turn it is); player 1's are `keys`.
@@ -1532,6 +1646,7 @@ func _end_game() -> void:
 		p["player"].stop()
 	vm.vlog("GAME end")
 	coop.stop()
+	mp_stop()
 	_drop_partner()
 	universe = {}
 	front.back_to_title()
@@ -1647,6 +1762,8 @@ func _physics_process(_delta: float) -> void:
 			_list_input()
 		Screen.FRONT:
 			coop.service()
+			if mpnet != null:
+				mpnet.menu_service()
 			front.tick()
 		Screen.RESULT:
 			_poll_menu_keys()
@@ -1664,6 +1781,9 @@ func _physics_process(_delta: float) -> void:
 				n = int(_speed_acc)
 				_speed_acc -= n
 			step_once = false
+			# The pause menu stops the game only when everyone has it open.
+			if screen == Screen.GAME and pause != null and pause.game_stopped():
+				n = 0
 			# Multiplayer, a friend's PC: no game here, only the host's picture (mp_net.gd).
 			if screen == Screen.GAME and net_client:
 				_net_client_tick()
@@ -1971,6 +2091,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		_mouse(event)
 		return
+	# The pause menu (Esc in the game; the old 0.4 co-op keeps its own Esc).
+	if event is InputEventKey and event.pressed and screen == Screen.GAME and pause != null and not coop.active():
+		if pause.open:
+			pause.key(event.keycode)
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_ESCAPE and not event.echo and (debug == null or not debug.open):
+			pause.toggle()
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_F3:
 			wasd = not wasd
@@ -2086,6 +2216,8 @@ func _draw() -> void:
 				var ust: Dictionary = mp_ui_state if net_client else (mpui.state_for(clampi(view_as, 0, mp.count() - 1)) if mpui != null and mp != null else {})
 				if not ust.is_empty():
 					MpUi.draw(self, ust)
+				if pause != null:
+					pause.draw()
 			perf_draw_us += Time.get_ticks_usec() - td
 			perf_draws += 1
 			perf_draw_max = maxi(perf_draw_max, Time.get_ticks_usec() - td)
@@ -3054,16 +3186,62 @@ func net_join(ip: String, port: int, pname: String, pw: String) -> void:
 	mpnet.join(ip, port, pname, pw)
 
 
+var net_host_name := ""     # whose game this PC joined (for "You left Kyle's game.")
+
+
+# Join from the title screen: it stays up ("Connecting to Kyle...") until the host lets this
+# PC in (mp_net_joined), or says why not (mp_net_ended).
+func net_join_menu(ip: String, port: int, pw: String, host_name: String) -> void:
+	_reset_runtime()
+	rec.clear()
+	frames = 0
+	net_host_name = host_name
+	mpnet.join(ip, port, net_name(), pw)
+
+
 func mp_net_joined(_index: int, _name: String) -> void:
-	pass
+	if screen == Screen.FRONT:
+		_music_stop_front()
+		net_client = true
+		frames = 0
+		screen = Screen.GAME
+
+
+func _music_stop_front() -> void:
+	if front != null and front.has_method("_music"):
+		front._music(false)
 
 
 func mp_net_ended(why: String) -> void:
-	if why != "":
-		mp_notice(why)
 	print("NET ended: " + why)
 	if DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--mpjoin"):
+		if why != "":
+			mp_notice(why)
 		get_tree().quit()
+		return
+	# A friend's PC: back to the title screen, saying why.
+	var host := net_host_name if net_host_name != "" else "the host"
+	var was_playing := net_client
+	pause.open = false
+	net_client = false
+	for p in bi.players:
+		p["player"].stop()
+	if screen != Screen.FRONT:
+		front.back_to_title()
+	if was_playing:
+		front._show(["The game with %s ended:" % host, ""] + front._wrap(why if why != "" else "The connection closed.", 44), "title")
+	else:
+		front._show(["Couldn't join %s:" % host, ""] + front._wrap(why if why != "" else "No answer.", 44), "join")
+
+
+# A friend leaves the game they joined (Esc held for a second).
+func net_leave() -> void:
+	mpnet.leave()
+	net_client = false
+	for p in bi.players:
+		p["player"].stop()
+	front.back_to_title()
+	front._show(["You left %s's game." % (net_host_name if net_host_name != "" else "the host")], "title")
 
 
 func mp_notice(text: String) -> void:

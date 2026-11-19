@@ -63,6 +63,7 @@ class Player:
 	var active := true           # false: left the game; their slot (and stats) wait for them
 	var back = null              # [room, x, y]: where they were before a battle; [room, "save"]: by its save point (mp_rooms.gd)
 	var respawn := false         # downed alone: comes back at the last save after the game over screen
+	var paused := false          # has the pause menu open (the game stops when everyone has)
 
 
 var eng

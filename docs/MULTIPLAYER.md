@@ -263,7 +263,7 @@ Left for later areas: the parallax background objects (`obj_backgrounder_*`: Sno
 its bridges, Waterfall's dock, the Core, the last corridor) still follow one camera. None are
 in the Ruins.
 
-### Stage 4: network (working 2026-11-19; not yet behind Host Game / Join)
+### Stage 4: network (done 2026-11-19)
 
 `godot/mp_net.gd`. The host runs the game; a friend's PC sends its keys and draws what it gets.
 
@@ -286,7 +286,30 @@ in the Ruins.
 - Tests: `--mphost PORT [--mppw P]`, `--mpjoin IP:PORT [--mpname N] [--mppw P]`, `--netlog`
   (prediction per frame), `--mplog N` (bytes per frame, round trip, key queue). The check suite
   runs a friend joining, walking, reading a sign and leaving (`--mpcheck net`).
-- Host Game / Join still start the 0.4 co-op until battles work for every player (stage 8).
+- **Host Game / Join on the title screen** use this network (the 0.4 co-op is left only for
+  its old tests). Hosting asks for an optional password. The host announces its game on the
+  local network every second (UDP 7789: host, universe, LV, room, players, password needed),
+  and the Join page lists those games ("2 of 4 players", "Password needed", "Full", "Another
+  version"). Join by IP address is there for other networks; it always asks for a password
+  (empty if none). A wrong password gets "Wrong password." and the Join page back.
+- **Keys the host ignores from friends:** Esc and F1 to F12, so a friend can't end the game
+  or change the host's window. `mp_net.gd kick(i)` and `set_password(pw)` are ready for the
+  host's menu (stage 7).
+
+### Pause menu (2026-11-19)
+
+`godot/pause_menu.gd`. Esc no longer reaches the game (Undertale's held Esc quits): it opens
+a menu with Resume, Leave (back to the title screen), Exit to desktop and Settings (movement
+keys, smooth motion, window size, scaling, fullscreen). Leave and Exit ask first when that
+costs something: the host is told "Everyone's game ends with yours." with friends in, and
+anyone not on a friend's PC is told progress since the last save is lost. A friend leaving is
+not asked: their things stay in the host's game.
+
+Alone, the game stops while the menu is open. In co-op every PC has its own menu and tells
+the host when it opens or closes (`"pause"` message); the game only stops when every player
+has it open, and the menu says "The game goes on for the others." until then. A paused player
+gives the game no keys. Tests: `--pausetest` (with `--game`, a window) and `--mpcheck pause`
+with a friend's `--mppause A:B`.
 
 Note for measuring: Windows slows down windowless test runs after about 15 seconds (every phase
 2.5x slower). Measure frame times with a window.

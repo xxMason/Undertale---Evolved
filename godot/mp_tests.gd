@@ -100,6 +100,31 @@ func frame(f: int) -> void:
 				_ok(seen.has("read"), "the friend read the sign before leaving")
 				_ok(eng.mp.list[1].inst == null, "the friend's character went when they left")
 				_end()
+		"pause":
+			# Host side: the host opens the pause menu just after the friend joins; the game
+			# goes on until the friend opens theirs too (--mppause), then stops until they close it.
+			var now := Engine.get_physics_frames()
+			if eng.mp.active_count() == 2 and not seen.has("joined"):
+				seen["joined"] = f
+				seen["last"] = now
+			if not seen.has("joined"):
+				return
+			if f == int(seen["joined"]) + 10:
+				eng.pause.toggle()
+			if f == int(seen["joined"]) + 40:
+				_ok(eng.pause.open and not eng.mp.list[1].paused, "the game goes on with only the host paused")
+			var gap := now - int(seen["last"])
+			seen["last"] = now
+			if gap > 40 and not seen.has("stopped"):
+				seen["stopped"] = gap
+				_ok(eng.pause.open, "the game stopped while both were paused (%d physics frames)" % gap)
+				_ok(not eng.mp.list[1].paused, "it went on once the friend resumed")
+				eng.pause.close()
+			if seen.has("stopped") and f == int(seen["joined"]) + 200:
+				_end()
+			if f == int(seen["joined"]) + 600 and not seen.has("stopped"):
+				_ok(false, "the game never stopped")
+				_end()
 		"rooms":
 			# Stage 5: player 2 goes left into room_ruins8 alone and falls through its hole;
 			# then player 1 follows into the world player 2's room is running.

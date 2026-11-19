@@ -97,7 +97,7 @@ func _go_title() -> void:
 	_music(true)
 	# Like Minecraft's LAN worlds: the network is listened to from the title screen on, so
 	# games are already in the Join list when it opens.
-	eng.coop.start_listening()
+	eng.mpnet.start_listening()
 
 
 func back_to_title() -> void:
@@ -143,7 +143,7 @@ func _select() -> void:
 # ------------------------------------------------------------------ keys
 
 func editing_text() -> bool:
-	return page == "name" or page == "rename" or page == "ipentry" or (page == "create" and create_row == 0)
+	return page == "name" or page == "rename" or page == "ipentry" or page == "hostpw" or page == "joinpw" or (page == "create" and create_row == 0)
 
 
 # Typed names: letters, digits, space and a few marks. Z, X and C are letters here; only
@@ -151,7 +151,7 @@ func editing_text() -> bool:
 func key_event(ev: InputEventKey) -> bool:
 	if not editing_text() or not ev.pressed:
 		return false
-	var limit := NAME_MAX if page == "name" else (40 if page == "ipentry" else Universes.NAME_MAX)
+	var limit := NAME_MAX if page == "name" else (40 if page == "ipentry" else (20 if page == "hostpw" or page == "joinpw" else Universes.NAME_MAX))
 	match ev.keycode:
 		KEY_BACKSPACE:
 			if page == "create":
@@ -226,10 +226,20 @@ func _text_done() -> void:
 			eng.settings["coop/last_ip"] = addr
 			eng._save_settings()
 			var hp := addr.rsplit(":", true, 1)
-			var port: int = int(hp[1]) if hp.size() > 1 and hp[1].is_valid_int() else eng.CoopNet.PORT
+			var port: int = int(hp[1]) if hp.size() > 1 and hp[1].is_valid_int() else eng.MpNet.PORT
 			joining = hp[0] if hp.size() > 1 and hp[1].is_valid_int() else addr
+			# By address there's no telling if the game has a password: asked, empty if none.
+			join_to = {"ip": joining, "port": port, "host": joining, "ask": true}
+			text = ""
+			page = "joinpw"
+		"hostpw":
+			_select()
+			page = "universes"
+			eng.host_universe(host_u, text.strip_edges())
+		"joinpw":
+			_select()
 			page = "join"
-			eng.coop.join(joining, port)
+			_join_now(text.strip_edges())
 
 
 func _text_cancel() -> void:
@@ -242,6 +252,10 @@ func _text_cancel() -> void:
 		"create":
 			page = "universes"
 		"ipentry":
+			page = "join"
+		"hostpw":
+			page = "universes"
+		"joinpw":
 			page = "join"
 
 
@@ -375,7 +389,11 @@ func _uni_pick() -> void:
 		"PLAY":
 			_music(false)
 			if mode == "host":
-				eng.host_universe(u)
+				# A password for friends (optional): Enter with none lets anyone in.
+				host_u = u
+				text = ""
+				page = "hostpw"
+				_music(true)
 			else:
 				eng.play_universe(u)
 		"RENAME":
@@ -470,7 +488,7 @@ func mouse(event: InputEvent, p: Vector2) -> void:
 			# A game: one click picks it, a double-click joins. The other rows are buttons.
 			var was := join_sel
 			join_sel = int(h[2])
-			if join_sel >= eng.coop.games().size() or event.double_click:
+			if join_sel >= eng.mpnet.games().size() or event.double_click:
 				_join_tick(false, false, true, false)
 			elif was != join_sel:
 				_move()
@@ -553,8 +571,11 @@ func draw() -> void:
 			_draw_confirm()
 		"settings":
 			_draw_settings()
-		"join", "ipentry":
+		"join", "ipentry", "joinpw":
 			_draw_join()
+		"hostpw":
+			_draw_universes()
+			_draw_pw("A password for friends to join", "Leave it empty to let anyone on your network in.")
 		"message":
 			_draw_message()
 
@@ -822,27 +843,28 @@ func run_test() -> void:
 
 var join_sel := 0
 var joining := ""             # who we're connecting to (shown while it happens)
+var join_to := {}             # the game a password is being typed for: {"ip", "port", "host"}
+var host_u: Dictionary = {}   # the universe a hosting password is being typed for
 
 
 func _open_join() -> void:
 	join_sel = 0
 	joining = ""
-	eng.coop.start_listening()
+	eng.mpnet.start_listening()
 	page = "join"
 
 
+func _joining() -> bool:
+	var n = eng.mpnet
+	return n.role == "client" and (n.state == "connecting" or n.state == "waiting")
+
+
 func _join_tick(up: bool, down: bool, ok: bool, back: bool) -> void:
-	var c = eng.coop
-	if c.join_state == "connecting" or c.join_state == "waiting":
+	var c = eng.mpnet
+	if _joining():
 		if back:
-			c.cancel_join()
+			c.stop()
 			_move()
-		return
-	if c.join_state == "failed" or c.join_state == "refused":
-		var why: String = c.join_why
-		var head := ("%s didn't let you in:" % joining) if c.join_state == "refused" else "Couldn't join " + joining + "."
-		c.join_state = ""
-		_show([head, ""] + _wrap(why, 44), "join")
 		return
 	var games: Array = c.games()
 	var n := games.size() + 2
@@ -858,12 +880,16 @@ func _join_tick(up: bool, down: bool, ok: bool, back: bool) -> void:
 		return
 	if join_sel < games.size():
 		var g: Dictionary = games[join_sel]
-		if g.get("full", false):
+		if int(g.get("players", 1)) >= int(g.get("max", 4)) or String(g.get("ver", "")) != eng.coop._my_version():
 			_sound("snd_nosound")
 			return
 		_select()
-		joining = String(g.get("host", "?"))
-		c.join(String(g["ip"]), int(g.get("port", eng.CoopNet.PORT)))
+		join_to = {"ip": String(g["ip"]), "port": int(g.get("port", eng.MpNet.PORT)), "host": String(g.get("host", "?"))}
+		if g.get("locked", false):
+			text = ""
+			page = "joinpw"
+		else:
+			_join_now("")
 	elif join_sel == games.size():
 		_select()
 		text = String(eng.settings.get("coop/last_ip", ""))
@@ -871,6 +897,11 @@ func _join_tick(up: bool, down: bool, ok: bool, back: bool) -> void:
 	else:
 		c.stop_listening()
 		_go_title()
+
+
+func _join_now(pw: String) -> void:
+	joining = String(join_to.get("host", "?"))
+	eng.net_join_menu(String(join_to["ip"]), int(join_to["port"]), pw, joining)
 
 
 func _wrap(s: String, width: int) -> Array:
@@ -888,7 +919,7 @@ func _wrap(s: String, width: int) -> Array:
 
 
 func _draw_join() -> void:
-	var c = eng.coop
+	var c = eng.mpnet
 	_t(320, 16, "JOIN", WHITE, "fnt_main", 1.0, true)
 	var games: Array = c.games()
 	_t(320, 52, "Games on your network" if not games.is_empty() else "Looking for games on your network" + ".".repeat((blink / 15) % 4), GREY, "fnt_maintext", 1.0, true)
@@ -901,14 +932,14 @@ func _draw_join() -> void:
 		eng._hit(r, "jrow", k)
 		if on:
 			eng._heart(52, y + 22)
-		_t(76, y + 6, ("%s's game  -  %s" % [g.get("host", "?"), g.get("universe", "")]) if String(g.get("universe", "")) != "" else "%s's game" % g.get("host", "?"), YELLOW if on else WHITE, "fnt_maintext")
+		var head := ("%s's game  -  %s" % [g.get("host", "?"), g.get("universe", "")]) if String(g.get("universe", "")) != "" else "%s's game" % g.get("host", "?")
+		_t(76, y + 6, head, YELLOW if on else WHITE, "fnt_maintext")
 		_t(76, y + 24, "LV %d      %s" % [int(g.get("lv", 1)), g.get("room", "")], WHITE if on else GREY, "fnt_maintext")
-		var me: Dictionary = (g.get("known", {}) as Dictionary).get(String(eng.player()["id"]), {})
-		var note := "New here: you'll start at LV %d with %dG." % [int(g.get("lv", 1)), int(g.get("gold", 0)) / 2]
-		if not me.is_empty():
-			note = "Your character: LV %d, %dG, %d item%s." % [int(g.get("lv", 1)), int(me.get("gold", 0)), int(me.get("items", 0)), "" if int(me.get("items", 0)) == 1 else "s"]
-		if g.get("full", false):
-			note = "Full: someone is already playing with %s." % g.get("host", "them")
+		var note := "%d of %d players%s" % [int(g.get("players", 1)), int(g.get("max", 4)), "   Password needed" if g.get("locked", false) else ""]
+		if int(g.get("players", 1)) >= int(g.get("max", 4)):
+			note = "Full: %d players are already playing." % int(g.get("max", 4))
+		elif String(g.get("ver", "")) != eng.coop._my_version():
+			note = "Another version (%s). Run update.bat to play together." % g.get("ver", "?")
 		_t(76, y + 41, note, GREY, "fnt_maintext")
 		y += 66
 		if k >= 3:
@@ -930,31 +961,55 @@ func _draw_join() -> void:
 		_box(b)
 		_t(320, 170, "The host's address", WHITE, "fnt_maintext", 1.0, true)
 		_t(320, 214, text + _caret(), YELLOW, "fnt_maintext", 1.0, true)
-		_t(320, 256, "e.g. 192.168.1.20  (or 192.168.1.20:7777)", GREY, "fnt_maintext", 1.0, true)
+		_t(320, 256, "e.g. 192.168.1.20  (or 192.168.1.20:%d)" % eng.MpNet.PORT, GREY, "fnt_maintext", 1.0, true)
 		_t(320, 290, "[ENTER] Join  [ESC] Back", GREY, "fnt_maintext", 1.0, true)
-	elif c.join_state == "connecting" or c.join_state == "waiting":
+	elif page == "joinpw":
+		_draw_pw("%s's password" % join_to.get("host", "The game"), "Leave it empty if the game has none." if join_to.get("ask", false) else "")
+	elif _joining():
 		var b := Rect2(80, 170, 480, 120)
 		_box(b)
 		var who := joining if joining != "" else "the host"
-		_t(320, 196, ("Connecting to %s" if c.join_state == "connecting" else "Waiting for %s's game") % who + ".".repeat((blink / 15) % 4), WHITE, "fnt_maintext", 1.0, true)
+		_t(320, 196, ("Connecting to %s" if c.state == "connecting" else "Waiting for %s's game") % who + ".".repeat((blink / 15) % 4), WHITE, "fnt_maintext", 1.0, true)
 		_t(320, 250, "[X] Cancel", GREY, "fnt_maintext", 1.0, true)
 
-# --jointest: on the Join page, waits for a game to show up and joins it with Z.
+
+# A password being typed, shown as stars.
+func _draw_pw(head: String, hint: String) -> void:
+	var b := Rect2(80, 150, 480, 170)
+	_box(b)
+	_t(320, 170, head, WHITE, "fnt_maintext", 1.0, true)
+	_t(320, 214, "*".repeat(text.length()) + _caret(), YELLOW, "fnt_maintext", 1.0, true)
+	if hint != "":
+		_t(320, 256, hint, GREY, "fnt_maintext", 1.0, true)
+	_t(320, 290, "[ENTER] OK  [ESC] Back", GREY, "fnt_maintext", 1.0, true)
+
+
+# --jointest [PASSWORD]: on the Join page, waits for a game to show up and joins it with Z
+# (typing the password if it asks for one).
 func run_join_test() -> void:
 	_open_join()
 	for k in 600:
 		await eng.get_tree().physics_frame
-		if not eng.coop.games().is_empty():
+		if not eng.mpnet.games().is_empty():
 			break
-	print("JOINTEST games heard: %d" % eng.coop.games().size())
+	print("JOINTEST games heard: %d" % eng.mpnet.games().size())
 	await _press(KEY_Z)
+	var args := OS.get_cmdline_user_args()
+	var ji := args.find("--jointest")
+	var pw: String = args[ji + 1] if ji >= 0 and ji + 1 < args.size() and not String(args[ji + 1]).begins_with("--") else ""
+	await eng.get_tree().physics_frame
+	if page == "joinpw":
+		print("JOINTEST asked for the password")
+		text = pw
+		_text_done()
 	for k in 600:
 		await eng.get_tree().physics_frame
-		if eng.coop.linked:
+		if eng.net_client or page == "message":
 			break
-	print("JOINTEST linked: %s, playing with %s" % [eng.coop.linked, eng.coop.partner.get("name", "-")])
-	if not eng.coop.linked:
-		await eng.get_tree().physics_frame
-		await eng.get_tree().physics_frame
-		print("JOINTEST page %s: %s" % [page, " / ".join(message)])
-		eng.get_tree().quit()
+	print("JOINTEST joined: %s, page %s: %s" % [eng.net_client, page, " / ".join(message)])
+	if eng.net_client:
+		for k in 120:
+			await eng.get_tree().physics_frame
+		print("JOINTEST frames from the host: %d" % eng.mpnet.stats["frames"])
+	eng.mpnet.leave()
+	eng.get_tree().quit()

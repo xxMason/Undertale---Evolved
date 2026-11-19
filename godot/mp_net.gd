@@ -13,8 +13,10 @@ extends RefCounted
 
 const MpPlayers = preload("res://mp_players.gd")
 const Recorder = preload("res://gml/gml_recorder.gd")
+const Universes = preload("res://universes.gd")
 
 const PORT := 7790
+const BEACON_PORT := 7789  # the host says "a game is here" on the local network once a second
 const PROTOCOL := 1
 const OPS := ["@owner", "@gui", "draw_set_transform", "draw_texture", "draw_texture_rect",
 	"draw_texture_rect_region", "draw_rect", "draw_line", "draw_arc", "draw_circle",
@@ -87,6 +89,9 @@ func start_host(port := PORT, pw := "") -> String:
 	conn.compress(ENetConnection.COMPRESS_ZSTD)
 	role = "host"
 	password = pw
+	beacon = PacketPeerUDP.new()
+	beacon.set_broadcast_enabled(true)
+	beacon.set_dest_address("255.255.255.255", BEACON_PORT)
 	if eng.mp == null:
 		eng.mp = MpPlayers.new()
 		eng.mp.setup(eng, [eng.net_name()])
@@ -96,6 +101,7 @@ func start_host(port := PORT, pw := "") -> String:
 
 
 func _host_service() -> void:
+	_announce()
 	while true:
 		var ev: Array = conn.service()
 		var t: int = ev[0]
@@ -123,6 +129,112 @@ func _host_service() -> void:
 		if peers[peer]["index"] < 0 and Time.get_ticks_msec() - int(peers[peer]["since"]) > HELLO_WAIT_MS:
 			peer.peer_disconnect_now(0)
 			peers.erase(peer)
+
+
+# ---------------------------------------------------------------- finding games (LAN)
+
+var beacon: PacketPeerUDP = null
+var _local_beacon: PacketPeerUDP = null
+var _beacon_ms := 0
+var listen: PacketPeerUDP = null
+var found := {}            # "host id:port" -> what its beacon said, plus "ip" and "seen"
+
+
+func _announce() -> void:
+	if beacon == null or Time.get_ticks_msec() - _beacon_ms < 1000:
+		return
+	_beacon_ms = Time.get_ticks_msec()
+	var u: Dictionary = eng.universe
+	var n: int = eng.mp.active_count() if eng.mp != null else 1
+	var info := {
+		"ube_mp": PROTOCOL, "ver": eng.coop._my_version(), "port": conn.get_local_port() if conn != null else PORT,
+		"host": eng.net_name(), "host_id": String(eng.player().get("id", "")),
+		"universe": Universes.display_name(u) if not u.is_empty() else "",
+		"lv": int(eng.vm.globals.get("lv", 1.0)),
+		"room": eng.room_title(eng.vm.room) if eng.vm.room >= 0 else "",
+		"players": n, "max": MpPlayers.MAX, "locked": password != "",
+	}
+	var pkt := JSON.stringify(info).to_utf8_buffer()
+	beacon.put_packet(pkt)
+	# Also to this PC itself: some networks don't hand a PC its own broadcasts.
+	if _local_beacon == null:
+		_local_beacon = PacketPeerUDP.new()
+		_local_beacon.set_dest_address("127.0.0.1", BEACON_PORT)
+	_local_beacon.put_packet(pkt)
+
+
+func start_listening() -> void:
+	if listen != null:
+		return
+	listen = PacketPeerUDP.new()
+	if listen.bind(BEACON_PORT) != OK:
+		listen = null
+
+
+func stop_listening() -> void:
+	if listen != null:
+		listen.close()
+		listen = null
+	found.clear()
+
+
+# Games heard in the last 4 seconds, by host name.
+func games() -> Array:
+	var out: Array = []
+	var now := Time.get_ticks_msec()
+	for k in found.keys():
+		if now - int(found[k]["seen"]) > 4000:
+			found.erase(k)
+		else:
+			out.append(found[k])
+	out.sort_custom(func(a, b): return String(a.get("host", "")) < String(b.get("host", "")))
+	return out
+
+
+func _hear() -> void:
+	if listen == null:
+		return
+	while listen.get_available_packet_count() > 0:
+		var pkt := listen.get_packet()
+		var ip := listen.get_packet_ip()
+		var d = JSON.parse_string(pkt.get_string_from_utf8())
+		if not (d is Dictionary) or int(d.get("ube_mp", 0)) != PROTOCOL:
+			continue
+		if String(d.get("host_id", "")) == String(eng.player().get("id", "")) and not OS.get_cmdline_user_args().has("--jointest"):
+			continue     # ourselves
+		d["ip"] = ip
+		d["seen"] = Time.get_ticks_msec()
+		# One entry per host (on this same PC it's heard twice): its network address is kept
+		# over 127.0.0.1.
+		var key := "%s:%d" % [d.get("host_id", ""), int(d.get("port", PORT))]
+		if found.has(key) and ip == "127.0.0.1" and String(found[key]["ip"]) != "127.0.0.1":
+			d["ip"] = found[key]["ip"]
+		found[key] = d
+
+
+# On the title screen: games heard, and a join in progress.
+func menu_service() -> void:
+	_hear()
+	if role == "client" and conn != null and state != "playing":
+		_client_service()
+
+
+# The host sends a player away (the player menu's Kick).
+func kick(index: int) -> void:
+	for peer in peers:
+		if int(peers[peer]["index"]) == index:
+			_refuse(peer, "%s removed you from the game." % eng.net_name())
+
+
+# This PC's player opened or closed the pause menu: a friend's PC tells the host.
+func set_paused(on: bool) -> void:
+	if role == "client" and link != null and state == "playing":
+		link.send(0, var_to_bytes({"t": "pause", "on": on}), ENetPacketPeer.FLAG_RELIABLE)
+
+
+# The host's new password: friends already in stay; anyone joining needs the new one.
+func set_password(pw: String) -> void:
+	password = pw
 
 
 func _send(peer: ENetPacketPeer, m: Dictionary) -> void:
@@ -165,6 +277,10 @@ func _host_msg(peer: ENetPacketPeer, m: Dictionary) -> void:
 			_log("%s is player %d" % [nm, idx + 1])
 		"bye":
 			_host_lost(peer)
+		"pause":
+			var i := int(peers[peer]["index"])
+			if i >= 0 and i < eng.mp.list.size():
+				eng.mp.list[i].paused = bool(m.get("on", false))
 
 
 func _host_lost(peer: ENetPacketPeer) -> void:
@@ -189,11 +305,23 @@ func _host_keys(peer: ENetPacketPeer, data: PackedByteArray) -> void:
 	for k in range(1, a.size()):
 		var f := first + k - 1
 		if f > last_seen:
-			p["keys"].append([f, a[k]])
+			p["keys"].append([f, _allowed(a[k])])
 			last_seen = f
 	p["kf"] = last_seen
 	while p["keys"].size() > KEY_QUEUE:
 		p["keys"].pop_front()
+
+
+# Keys a friend's PC may give the game: not Esc (held, Undertale ends the game, the host's and
+# everyone's; a friend leaves with it on their own PC) nor the F keys (fullscreen, debug).
+func _allowed(held) -> Array:
+	var out: Array = []
+	if held is Array:
+		for c in held:
+			var k := int(c)
+			if k != 27 and (k < 112 or k > 123):
+				out.append(k)
+	return out
 
 
 # A friend's keys for this frame: the oldest waiting frame, or what they held last.
@@ -735,6 +863,8 @@ func stop() -> void:
 	peers.clear()
 	_queue.clear()
 	role = ""
+	state = ""
+	beacon = null
 
 
 # Between game frames: receive whatever has arrived.

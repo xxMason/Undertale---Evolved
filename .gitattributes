@@ -1,0 +1,5 @@
+# Windows scripts keep CRLF line endings, also in the zips GitHub makes of a branch
+# (the online updater downloads those).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

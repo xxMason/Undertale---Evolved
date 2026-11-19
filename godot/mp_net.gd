@@ -51,12 +51,31 @@ var _sent_keys := 0
 var _hello_ms := 0
 var _my_name := ""
 var _my_pw := ""
-var stats := {"frames": 0, "bytes": 0, "late": 0, "dropped": 0, "repeats": 0}
+var stats := {"frames": 0, "bytes": 0, "late": 0, "dropped": 0, "repeats": 0, "jerks": 0}
+
+# Testing a bad network on a friend's PC: --netloss PCT drops that share of the frames coming
+# in and the keys going out; --netlag MS holds both back that long, --netjitter MS up to that
+# much more at random (so packets also arrive out of order).
+var sim_loss := 0.0
+var sim_lag := 0
+var sim_jitter := 0
+var _sim_rng := RandomNumberGenerator.new()
+var _sim_in: Array = []      # [due msec, frame bytes]
+var _sim_out: Array = []     # [due msec, key bytes]
 
 
 func setup(e) -> void:
 	eng = e
-	log_on = OS.get_cmdline_user_args().has("--netlog")
+	var args := OS.get_cmdline_user_args()
+	log_on = args.has("--netlog")
+	for opt in ["--netloss", "--netlag", "--netjitter"]:
+		var k := args.find(opt)
+		if k >= 0 and k + 1 < args.size():
+			match opt:
+				"--netloss": sim_loss = float(args[k + 1]) / 100.0
+				"--netlag": sim_lag = int(args[k + 1])
+				"--netjitter": sim_jitter = int(args[k + 1])
+	_sim_rng.seed = 4242
 	for k in OPS.size():
 		_op_index[OPS[k]] = k
 
@@ -635,7 +654,48 @@ func join(ip: String, port := PORT, pname := "Friend", pw := "") -> void:
 	_log("joining %s:%d" % [ip, port])
 
 
+func _sim_delay() -> int:
+	return sim_lag + (_sim_rng.randi_range(0, sim_jitter) if sim_jitter > 0 else 0)
+
+
+func _frame_in(data: PackedByteArray) -> void:
+	stats["bytes"] += data.size()
+	var fr = bytes_to_var(data)
+	if not (fr is Dictionary):
+		return
+	var f := int(fr["f"])
+	# Older than what's on screen already: no use. Out of order but not shown yet: put in its
+	# place (the network may have overtaken it).
+	if f <= _shown_f:
+		stats["late"] += 1
+		return
+	var at := _queue.size()
+	while at > 0 and int(_queue[at - 1]["f"]) >= f:
+		if int(_queue[at - 1]["f"]) == f:
+			return
+		at -= 1
+	_queue.insert(at, fr)
+
+
+# What the simulated bad network lets through by now.
+func _sim_release() -> void:
+	var now := Time.get_ticks_msec()
+	for box in [_sim_in, _sim_out]:
+		var keep: Array = []
+		for e in box:
+			if int(e[0]) <= now:
+				if box == _sim_in:
+					_frame_in(e[1])
+				elif link != null:
+					link.send(1, e[1], ENetPacketPeer.FLAG_UNSEQUENCED)
+			else:
+				keep.append(e)
+		box.assign(keep)
+
+
 func _client_service() -> void:
+	if not _sim_in.is_empty() or not _sim_out.is_empty():
+		_sim_release()
 	while conn != null:
 		var ev: Array = conn.service()
 		var t: int = ev[0]
@@ -656,13 +716,12 @@ func _client_service() -> void:
 			var ch: int = ev[3]
 			var data: PackedByteArray = (ev[1] as ENetPacketPeer).get_packet()
 			if ch == 2:
-				stats["bytes"] += data.size()
-				var fr = bytes_to_var(data)
-				if fr is Dictionary:
-					if not _queue.is_empty() and int(fr["f"]) <= int(_queue[-1]["f"]):
-						stats["late"] += 1
-					else:
-						_queue.append(fr)
+				if sim_loss > 0.0 and _sim_rng.randf() < sim_loss:
+					continue
+				if sim_lag > 0 or sim_jitter > 0:
+					_sim_in.append([Time.get_ticks_msec() + _sim_delay(), data])
+					continue
+				_frame_in(data)
 			else:
 				var m = bytes_to_var(data)
 				if m is Dictionary:
@@ -693,6 +752,7 @@ func _client_msg(m: Dictionary) -> void:
 
 
 var _key_hist: Array = []
+const KEY_HIST := 8
 var _pending := {}          # my key frame -> arrow direction, not yet used by the host
 var _last_pp = null
 var _blocked := Vector2i.ZERO
@@ -710,15 +770,27 @@ func client_tick(local_keys: Array) -> void:
 	_pending[_sent_keys] = Vector2i((1 if local_keys.has(39) else 0) - (1 if local_keys.has(37) else 0), (1 if local_keys.has(40) else 0) - (1 if local_keys.has(38) else 0))
 	_sent_dirs[_sent_keys] = _pending[_sent_keys]
 	_key_hist.append(local_keys)
-	while _key_hist.size() > 4:
+	# Each packet repeats the last KEY_HIST frames, so a key gets through unless that many
+	# packets in a row are lost.
+	while _key_hist.size() > KEY_HIST:
 		_key_hist.pop_front()
 	var pkt: Array = [_sent_keys - _key_hist.size() + 1]
 	pkt.append_array(_key_hist)
-	link.send(1, var_to_bytes(pkt), ENetPacketPeer.FLAG_UNSEQUENCED)
+	if sim_loss > 0.0 and _sim_rng.randf() < sim_loss:
+		pass
+	elif sim_lag > 0 or sim_jitter > 0:
+		_sim_out.append([Time.get_ticks_msec() + _sim_delay(), var_to_bytes(pkt)])
+	else:
+		link.send(1, var_to_bytes(pkt), ENetPacketPeer.FLAG_UNSEQUENCED)
 	# Play the frames at the host's pace with a small buffer: one per tick, catching up when
 	# too many are waiting, holding the last one when none has come.
 	if _queue.is_empty():
 		stats["repeats"] += 1
+		# No new frame: the last one stays, but my own walking goes on with the keys sent since.
+		if _last_fr != null:
+			eng.rec.view = _last_fr["v"]
+			_predict(_last_fr, true)
+			_measure(_last_fr)
 		return
 	while _queue.size() > BUFFER + 2:
 		_queue.pop_front()
@@ -748,6 +820,8 @@ func _texture(code: int) -> Texture2D:
 
 
 func _apply(fr: Dictionary) -> void:
+	_shown_f = int(fr["f"])
+	_last_fr = fr
 	var rec = eng.rec
 	rec.clear()
 	rec.view = fr["v"]
@@ -781,6 +855,7 @@ func _apply(fr: Dictionary) -> void:
 	eng.net_frame = int(fr["f"])
 	eng.mp_ui_state = fr.get("ui", {})
 	_predict(fr)
+	_measure(fr)
 	if log_on and fr.has("pp"):
 		var shown: Vector2 = fr["pp"] + predicted
 		print("PRED f=%d host_f=%d ack=%d pending=%d host_x=%.0f shown_x=%.0f step=%.0f view_x=%.0f" % [eng.frames, int(fr["f"]), int(fr.get("ack", -1)), _pending.size(), fr["pp"].x, shown.x, shown.x - _last_shown.x, eng.rec.view.x])
@@ -790,7 +865,7 @@ func _apply(fr: Dictionary) -> void:
 
 # My own walking shows at once: the keys the host hasn't used yet move my character (and the
 # camera with it) the way Undertale's walk would, until the host's frames catch up.
-func _predict(fr: Dictionary) -> void:
+func _predict(fr: Dictionary, again := false) -> void:
 	var rec = eng.rec
 	rec.shift.clear()
 	predicted = Vector2.ZERO
@@ -806,13 +881,16 @@ func _predict(fr: Dictionary) -> void:
 	# A direction the host's character didn't move in while it was held is blocked (a wall):
 	# it isn't predicted until that key is let go or turned round.
 	var used = _sent_dirs.get(ack)
-	if _last_pp != null and used != null and mv and _last_mv:
+	if again:
+		pass      # the same frame again: nothing new about walls
+	elif _last_pp != null and used != null and mv and _last_mv:
 		if used.x != 0 and absf(pp.x - _last_pp.x) < 0.01:
 			_blocked.x = used.x
 		if used.y != 0 and absf(pp.y - _last_pp.y) < 0.01:
 			_blocked.y = used.y
-	_last_pp = pp
-	_last_mv = mv
+	if not again:
+		_last_pp = pp
+		_last_mv = mv
 	var keys := _pending.keys()
 	keys.sort()
 	var newest = _pending[keys[-1]] if not keys.is_empty() else used
@@ -860,6 +938,25 @@ func _predict(fr: Dictionary) -> void:
 var _sent_dirs := {}
 var _last_mv := false
 var _last_shown := Vector2.ZERO
+var _shown_f := -1           # the host frame on screen
+var _last_fr = null          # and the frame itself
+var _m_last = null           # where my character showed last frame (null: not walking)
+
+
+# Smoothness of my own walking as shown here: a jerk is a frame where it jumps (more than two
+# steps) or steps back against the key held. A room change or no character isn't counted.
+func _measure(fr: Dictionary) -> void:
+	if not fr.has("pp") or not bool(fr.get("mv", false)) or fr.has("box"):
+		_m_last = null
+		return
+	var shown: Vector2 = fr["pp"] + predicted
+	if _m_last != null:
+		var d: Vector2 = shown - _m_last
+		var held = _pending[_pending.keys().max()] if not _pending.is_empty() else null
+		var back: bool = held != null and ((held.x != 0 and d.x * held.x < -0.5) or (held.y != 0 and d.y * held.y < -0.5))
+		if d.length() < 100.0 and (d.length() > 7.0 or back):
+			stats["jerks"] += 1
+	_m_last = shown
 
 
 func _play_sounds(list: Array) -> void:
@@ -925,6 +1022,10 @@ func stop() -> void:
 	_sounds.clear()
 	peers.clear()
 	_queue.clear()
+	_shown_f = -1
+	_last_fr = null
+	_sim_in.clear()
+	_sim_out.clear()
 	role = ""
 	state = ""
 	beacon = null
@@ -961,5 +1062,5 @@ func status_line() -> String:
 				parts.append("%s rtt=%dms kq=%d %dB/f (%dB compressed)" % [p["name"], peer.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME), p["keys"].size(), int(p["bytes"]) / maxi(1, int(p["frames"])), int(p.get("zlast", 0))])
 		return "host: " + ", ".join(parts)
 	if role == "client":
-		return "client %s: frames=%d late=%d dropped=%d repeats=%d queue=%d %dB/f rtt=%dms" % [state, stats["frames"], stats["late"], stats["dropped"], stats["repeats"], _queue.size(), int(stats["bytes"]) / maxi(1, int(stats["frames"])), link.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME) if link != null else -1]
+		return "client %s: frames=%d late=%d dropped=%d repeats=%d jerks=%d queue=%d %dB/f rtt=%dms" % [state, stats["frames"], stats["late"], stats["dropped"], stats["repeats"], stats["jerks"], _queue.size(), int(stats["bytes"]) / maxi(1, int(stats["frames"])), link.get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME) if link != null else -1]
 	return ""

@@ -75,6 +75,20 @@ if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
 $kho = @(Get-Content $kh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
 $kok = ("$kho" -match 'MPCHECK kick done, 0 failed') -and ("$ko1" -match 'removed you from the game') -and ("$ko2" -match 'You were removed from this game') -and -not ("$kho $ko1 $ko2" -match 'SCRIPT ERROR')
 Say $kok 'host: remove a friend, change the password' $(if ($kok) { '' } else { (@($kho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($ko1 + $ko2 | Where-Object { $_ -match 'NET ended|ERROR' }) -join '; ') })
+# A friend on a bad network (10% of packets lost, 100-160 ms late, out of order): every one
+# of their 40 Z taps reaches the host's game, and they walk.
+$lk = @()
+# (from frame 100: joining takes a moment, and keys only go once the friend is in)
+for ($i = 0; $i -lt 6; $i++) { $a = 100 + $i * 100; $lk += "${a}:39x40"; $lk += "$($a + 50):37x40" }
+for ($t = 100; $t -lt 700; $t += 15) { $lk += "${t}:90x1" }
+$lh = Join-Path $env:TEMP 'ube_check_lossy_host.txt'
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_lossy')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '1500', '--mphost', '7799', '--mpname', 'Kyle', '--mpcheck', 'lossy', '--taps', '40', '--tps', '30') -RedirectStandardOutput $lh -RedirectStandardError "$lh.err" -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$lco = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7799 --mpname Greg --frames 780 --tps 30 --mplog 760 --press ($lk -join ',') --netloss 10 --netlag 100 --netjitter 60 2>&1 | ForEach-Object { "$_" }
+if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
+$lho = @(Get-Content $lh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
+$lok = ("$lho" -match 'MPCHECK lossy done, 0 failed') -and -not ("$lho $lco" -match 'SCRIPT ERROR')
+Say $lok 'network: a friend on a bad network' $(if ($lok) { (@($lco | Where-Object { $_ -match '^NET f' }) | Select-Object -Last 1) -replace '.*client playing: ', '' } else { (@($lho | Where-Object { $_ -match 'FAIL|ERROR' }) -join '; ') })
 # A friend's PC that misbehaves (pause on and off, a chat flood, a second hello, junk packets)
 # while another plays normally: the host stays up, adds nobody, and lets 5 lines in 4 s through.
 $sh = Join-Path $env:TEMP 'ube_check_spam_host.txt'

@@ -457,6 +457,18 @@ player whose camera and values the room's own objects follow) and members.
   network, 6000 frames: no errors, no late frames on any friend, 12-15 KB a frame before
   compression (1-1.4 KB on the wire). Eight friends joining and leaving (half of them killed
   mid-game) and one spamming: no errors.
+- A bad network, simulated on a friend's PC (`--netloss PCT --netlag MS --netjitter MS`;
+  the host checks with `--mpcheck lossy --taps N` that every tap arrived): up to 20% loss,
+  or 150 ms late with 80 ms of jitter, every key tap gets through and the friend's own
+  walking stays smooth (`jerks` in the friend's NET line). Each packet of keys repeats the
+  last 8 frames; frames that arrive out of order are put back in order if not yet shown; on
+  a frame that didn't come, the friend's own walking still moves. A lost frame shows as the
+  previous one held (frames aren't sent twice), so 5% loss holds about 7% of frames.
+- In a window (`--framelog`, `--titlewait SECS`): the title screen compiles everything in
+  about 15 s, with a stall of up to 0.3 s in its first seconds (the biggest scripts); in the
+  game after that, the first battle doesn't stall. The game draws at most the screen's
+  refresh rate (`Engine.max_fps`): with vsync overridden by a graphics driver it drew 3000
+  frames a second.
 - Found and fixed: the background compile took a whole script at a time, and a few scripts
   take long (the end credits' 1.3 s), so the game froze about a second after it started.
   While playing, scripts over 150 KB are left for the menus (the title screen now compiles in

@@ -2,7 +2,7 @@
 extends RefCounted
 
 const NAME := "Ultimate Battle Engine"
-const VERSION := "0.4.2"           # bump the minor number when save or replay formats change
+const VERSION := "0.5.0"           # bump the minor number when save or replay formats change
 
 # File format versions. Each reader accepts every older version (see engine_save.gd);
 # a newer version than these is refused with a clear message instead of misread.

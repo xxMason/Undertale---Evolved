@@ -100,6 +100,25 @@ func frame(f: int) -> void:
 				_ok(seen.has("read"), "the friend read the sign before leaving")
 				_ok(eng.mp.list[1].inst == null, "the friend's character went when they left")
 				_end()
+		"lossy":
+			# Host side of a friend on a bad network (--netloss / --netlag / --netjitter on their
+			# PC): every Z they tap (--taps N of them) must reach the game, and they must walk.
+			var gi := _index_of("Greg")
+			if gi >= 0:
+				seen["was"] = true
+				if eng.mp.list[gi].keys.pressed(90):
+					seen["taps"] = int(seen.get("taps", 0)) + 1
+				var x := _at(gi).x
+				if x > 0:
+					seen["minx"] = minf(float(seen.get("minx", x)), x)
+					seen["maxx"] = maxf(float(seen.get("maxx", x)), x)
+			elif seen.has("was") and not seen.has("done"):
+				seen["done"] = f
+				var args := OS.get_cmdline_user_args()
+				var want := int(args[args.find("--taps") + 1]) if args.has("--taps") else 0
+				_ok(int(seen.get("taps", 0)) == want, "every tap arrived (%d of %d)" % [int(seen.get("taps", 0)), want])
+				_ok(float(seen.get("maxx", 0)) - float(seen.get("minx", 0)) > 60.0, "Greg walked (%.0f to %.0f)" % [float(seen.get("minx", 0)), float(seen.get("maxx", 0))])
+				_end()
 		"spam":
 			# Host side: Eve's PC misbehaves (--mpspam: pause on and off, a flood of chat, a second
 			# hello, packets that aren't what the host expects) while Greg plays normally.

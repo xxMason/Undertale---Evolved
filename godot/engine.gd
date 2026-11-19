@@ -182,6 +182,12 @@ var universe: Dictionary = {}  # the universe being played ({} in the Battle Eng
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
+	# No more frames drawn than the screen shows. Vsync is on, but a graphics driver can
+	# override it, and then the game would draw thousands of frames a second for nothing
+	# (a CPU core and the GPU flat out). The game itself runs at 30.
+	if DisplayServer.get_name() != "headless":
+		var hz := DisplayServer.screen_get_refresh_rate()
+		Engine.max_fps = clampi(roundi(hz) if hz > 0.0 else 144, 60, 240)
 	var i := args.find("--battle")
 	if i >= 0 and i + 1 < args.size():
 		auto_index = int(args[i + 1])
@@ -2263,8 +2269,43 @@ var _hitch_logic := 0
 var _hitch_draw := 0
 
 
+var _fl_t := 0
+var _fl_n := 0
+var _fl_sum := 0
+var _fl_max := 0
+var _fl_slow := 0
+var _fl_start := -1
+
+
+# --framelog (testing, in a window): every displayed frame over 40 ms, with the screen and
+# how far the background compile is; a summary every 5 seconds. --titlewait SECS: stay on the
+# title screen that long, then start the game as PLAY does (with --savedir, --room, --set).
+func _frame_log() -> void:
+	var now := Time.get_ticks_usec()
+	if _fl_t > 0:
+		var dt := now - _fl_t
+		_fl_n += 1
+		_fl_sum += dt
+		_fl_max = maxi(_fl_max, dt)
+		if dt > 40000:
+			_fl_slow += 1
+			print("FRAMELOG slow %.1f ms on %s (game frame %d, room %s, warm %.0f%%)" % [dt / 1000.0, Screen.keys()[screen], frames, vm.room_names[vm.room] if vm != null and vm.room >= 0 else "-", vm.warm_progress() * 100.0 if vm != null else 0.0])
+		if _fl_n % 150 == 0:
+			print("FRAMELOG %s: %d frames, avg %.1f ms, worst %.1f ms, %d over 40 ms, warm %.0f%%, game frame %d, %s, vsync %d, window mode %d" % [Screen.keys()[screen], _fl_n, _fl_sum / 1000.0 / _fl_n, _fl_max / 1000.0, _fl_slow, vm.warm_progress() * 100.0 if vm != null else 0.0, frames, vm.room_names[vm.room] if vm != null and vm.room >= 0 else "-", DisplayServer.window_get_vsync_mode(), DisplayServer.window_get_mode()])
+	_fl_t = now
+	var tw := OS.get_cmdline_user_args().find("--titlewait")
+	if tw >= 0 and screen == Screen.FRONT:
+		if _fl_start < 0:
+			_fl_start = Time.get_ticks_msec()
+		elif Time.get_ticks_msec() - _fl_start > int(OS.get_cmdline_user_args()[tw + 1]) * 1000:
+			print("FRAMELOG starting the game from the title screen")
+			start_game()
+
+
 func _process(_delta: float) -> void:
 	queue_redraw()
+	if OS.get_cmdline_user_args().has("--framelog"):
+		_frame_log()
 	# Multiplayer: take in what has arrived on every displayed frame, not only on game frames,
 	# so keys and pictures never wait a whole frame for it.
 	if mpnet != null and mpnet.active():

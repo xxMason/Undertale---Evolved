@@ -100,6 +100,71 @@ func frame(f: int) -> void:
 				_ok(seen.has("read"), "the friend read the sign before leaving")
 				_ok(eng.mp.list[1].inst == null, "the friend's character went when they left")
 				_end()
+		"pmenu":
+			# Player 2 faces player 1 and opens the player menu with Enter: Check, Give item
+			# (a candy), Give gold, Heal (a candy, on player 1 at 10 HP).
+			var pm = eng.mpui.pmenu
+			if f % 10 == 0 and f <= 300 and OS.get_cmdline_user_args().has("--mpverbose"):
+				print("PM f=%d p1=%s p2=%s face2=%s menu=%s ui=%s" % [f, _at(0), _at(1), _v(1, "facing"), pm.menus.get(1), eng.mpui.state_for(1).get("m", {}).get("rows", [])])
+			if f == 60:
+				_ok(pm.menus.has(1) and int(pm.menus[1]["to"]) == 0, "Enter facing player 1 opens player 2's player menu (%s)" % [pm.menus.get(1)])
+				_ok(float(_v(1, "interact")) == 0.0, "the game didn't take the Enter")
+			if f == 90:
+				var rows: Array = eng.mpui.state_for(1).get("m", {}).get("rows", [])
+				_ok(rows.size() == 8 and String(rows[0]).contains("Kyle") or rows.size() == 8 and String(rows[0]).length() > 2, "Check shows player 1's STAT page (%s)" % [rows])
+				print("MPCHECK info Check: %s" % [rows])
+			if f == 200:
+				var d: Array = pm.done
+				_ok(d.any(func(x): return x[1] == "item" and x[2] == 0), "player 2 gave an item (%s)" % [d])
+				_ok(d.any(func(x): return x[1] == "gold" and x[2] == 0), "player 2 gave gold")
+				_ok(d.any(func(x): return x[1] == "heal" and x[2] == 0 and int(x[3]) > 0), "player 2 healed player 1")
+				_ok(float(_v(0, "gold")) == 30.0 and float(_v(1, "gold")) == 10.0, "10G went from player 2 to player 1 (%s and %s)" % [_v(0, "gold"), _v(1, "gold")])
+				_ok(float(_v(0, "hp")) > 10.0, "player 1 was healed (HP %s)" % _v(0, "hp"))
+				_ok(_items(1) == [0.0, 0.0] and _items(0)[0] == 1.0, "player 2's two candies went: one given, one eaten by player 1 (%s and %s)" % [_items(0), _items(1)])
+				_end()
+		"kick":
+			# Host side: the host removes the friend from the Players page of the pause menu,
+			# then changes the password there.
+			var pz = eng.pause
+			if eng.mp.active_count() == 2 and not seen.has("joined"):
+				seen["joined"] = f
+			if not seen.has("joined"):
+				return
+			var j := int(seen["joined"])
+			if f == j + 20:
+				pz.toggle()
+				pz.key(KEY_DOWN)        # Players
+				pz.key(KEY_Z)
+				_ok(pz.page == "players" and pz._player_rows()[0][0] == eng.mp.list[1].name, "the host's Players page lists the friend (%s)" % [pz._player_rows()])
+				pz.key(KEY_Z)           # the friend
+				_ok(pz.page == "confirm", "removing asks first")
+				pz.key(KEY_LEFT)        # Yes
+				pz.key(KEY_Z)
+				_ok(pz.page == "players", "back on the Players page")
+				pz.close()              # (alone, an open menu stops the game)
+			if f == j + 80:
+				_ok(eng.mp.active_count() == 1, "the friend is out of the game (%d players)" % eng.mp.active_count())
+				var pz2 = eng.pause
+				pz2.toggle()
+				pz2.key(KEY_DOWN)
+				pz2.key(KEY_Z)
+				_ok(pz2.page == "players" and pz2._player_rows().size() == 2, "the Players page now has only the password and Back")
+				pz2.key(KEY_Z)          # Password
+				for c in "abc":
+					var e := InputEventKey.new()
+					e.keycode = OS.find_keycode_from_string(c.to_upper())
+					e.unicode = c.unicode_at(0)
+					e.pressed = true
+					pz2.key_event(e)
+				var en := InputEventKey.new()
+				en.keycode = KEY_ENTER
+				en.pressed = true
+				pz2.key_event(en)
+				_ok(eng.mpnet.password == "abc", "the password is changed (%s)" % eng.mpnet.password)
+				pz2.close()
+			if f == j + 400:
+				_ok(eng.mp.active_count() == 1, "the removed friend didn't get back in, even with the password")
+				_end()
 		"pause":
 			# Host side: the host opens the pause menu just after the friend joins; the game
 			# goes on until the friend opens theirs too (--mppause), then stops until they close it.

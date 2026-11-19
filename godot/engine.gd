@@ -29,6 +29,7 @@ const CoopNet = preload("res://coop_net.gd")
 const CoopPartner = preload("res://coop_partner.gd")
 const MpNet = preload("res://mp_net.gd")
 const PauseMenu = preload("res://pause_menu.gd")
+const Chat = preload("res://chat.gd")
 const MpRooms = preload("res://mp_rooms.gd")
 const MpSaves = preload("res://mp_saves.gd")
 const MpUi = preload("res://mp_ui.gd")
@@ -169,6 +170,7 @@ var _speed_acc := 0.0
 var settings: Dictionary = {}
 var front = null               # title screen, universes, settings (front_menu.gd)
 var pause = null               # the game's pause menu, Esc (pause_menu.gd)
+var chat = null                # T in a game with friends (chat.gd)
 var coop = null                # LAN co-op link (coop_net.gd)
 var coop_vm_keys = null        # co-op: the keys the game itself gets this frame
 var coop_partner_keys: Array = []   # co-op: the other player's keys this frame
@@ -262,6 +264,8 @@ func _ready() -> void:
 	front.setup(self)
 	pause = PauseMenu.new()
 	pause.setup(self)
+	chat = Chat.new()
+	chat.setup(self)
 	coop = CoopNet.new()
 	add_child(coop)
 	coop.setup(self)
@@ -350,10 +354,15 @@ func _ready() -> void:
 			print("NET error: " + why)
 			get_tree().quit(2)
 			return
+		if args.find("--mpchat") >= 0:
+			_mp_chat_test(args[args.find("--mpchat") + 1])
 	elif mj >= 0 and mj + 1 < args.size():
 		var hp: PackedStringArray = args[mj + 1].split(":")
 		var ni := args.find("--mpname")
 		net_join(hp[0], int(hp[1]) if hp.size() > 1 else MpNet.PORT, args[ni + 1] if ni >= 0 and ni + 1 < args.size() else "Friend", mpw)
+		var mpc := args.find("--mpchat")
+		if mpc >= 0 and mpc + 1 < args.size():
+			_mp_chat_test(args[mpc + 1])
 		var mpp := args.find("--mppause")
 		if mpp >= 0 and mpp + 1 < args.size():
 			_mp_pause_test(args[mpp + 1])
@@ -496,6 +505,52 @@ func _pause_test() -> void:
 	get_tree().quit()
 
 
+# --mpchat TEXT (tests): once a friend is in (or this PC is in the host's game), types T, the
+# text and Enter, as a player would.
+func _mp_chat_test(t: String) -> void:
+	while not ((net_client and mpnet.state == "playing") or (mp != null and mp.active_count() >= 2)):
+		await get_tree().physics_frame
+	for k in 30:
+		await get_tree().physics_frame
+	var typ := func(code: Key, uni: int) -> void:
+		for down in [true, false]:
+			var e := InputEventKey.new()
+			e.keycode = code
+			e.unicode = uni if down else 0
+			e.pressed = down
+			Input.parse_input_event(e)
+			await get_tree().physics_frame
+	await typ.call(KEY_T, 0)
+	print("NET chat open: %s" % chat.open)
+	for c in t:
+		await typ.call(OS.find_keycode_from_string(c.to_upper()) if c != " " else KEY_SPACE, c.unicode_at(0))
+	await typ.call(KEY_ENTER, 0)
+	print("NET chat sent, open: %s" % chat.open)
+	var si := OS.get_cmdline_user_args().find("--shotsdir")
+	if si < 0 or DisplayServer.get_name() == "headless":
+		return
+	# Pictures for checking the look: the lines, typing, and the host's Players page.
+	var dir: String = OS.get_cmdline_user_args()[si + 1]
+	DirAccess.make_dir_recursive_absolute(dir)
+	var shot := func(nm: String) -> void:
+		await RenderingServer.frame_post_draw
+		get_viewport().get_texture().get_image().save_png(dir.path_join(nm + ".png"))
+	for k in 60:
+		await get_tree().physics_frame
+	await shot.call("chat_lines")
+	await typ.call(KEY_T, 0)
+	for c in "see you":
+		await typ.call(OS.find_keycode_from_string(c.to_upper()) if c != " " else KEY_SPACE, c.unicode_at(0))
+	await shot.call("chat_typing")
+	await typ.call(KEY_ESCAPE, 0)
+	if mpnet.role == "host":
+		pause.toggle()
+		pause.key(KEY_DOWN)
+		pause.key(KEY_Z)
+		await shot.call("host_players")
+		pause.close()
+
+
 # --mppause A:B (a friend's PC, tests): opens the pause menu A physics frames after joining
 # and closes it B frames later.
 func _mp_pause_test(spec: String) -> void:
@@ -512,10 +567,18 @@ func _mp_pause_test(spec: String) -> void:
 	print("NET resumed")
 
 
+# This PC's keys are the pause menu's or the chat's, not the game's.
+func _keys_taken() -> bool:
+	return (pause != null and pause.open) or (chat != null and chat.open)
+
+
 # The game here ended (back to the title): no more network or other players.
 func mp_stop() -> void:
 	if pause != null:
 		pause.open = false
+	if chat != null:
+		chat.close()
+		chat.lines = []
 	if mpnet != null:
 		mpnet.stop()
 	net_client = false
@@ -604,7 +667,7 @@ func coop_local_keys(f: int) -> Array:
 		return held
 	if debug != null and debug.open:
 		return []
-	if pause != null and pause.open:
+	if _keys_taken():
 		return []
 	return keys.sample_local()
 
@@ -1360,8 +1423,8 @@ func _game_frame() -> void:
 	var gk = coop_vm_keys if coop_vm_keys != null else _game_auto_keys()
 	if gk == null and debug != null and debug.open:
 		gk = []     # the debug menu has the keyboard
-	if pause != null and pause.open:
-		gk = []     # so has the pause menu
+	if _keys_taken():
+		gk = []     # so has the pause menu, or the chat
 	keys.poll(gk)
 	# Esc is the pause menu's, never the game's (Undertale ends the game when it's held).
 	if not coop.active():
@@ -2091,10 +2154,20 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		_mouse(event)
 		return
+	# The chat (T with friends): typing takes every key.
+	if event is InputEventKey and event.pressed and screen == Screen.GAME and chat != null and not coop.active():
+		if chat.open:
+			chat.key_event(event)
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_T and not event.echo and not pause.open and (debug == null or not debug.open) and chat.usable():
+			chat.start()
+			get_viewport().set_input_as_handled()
+			return
 	# The pause menu (Esc in the game; the old 0.4 co-op keeps its own Esc).
 	if event is InputEventKey and event.pressed and screen == Screen.GAME and pause != null and not coop.active():
 		if pause.open:
-			pause.key(event.keycode)
+			pause.key_event(event)
 			get_viewport().set_input_as_handled()
 			return
 		if event.keycode == KEY_ESCAPE and not event.echo and (debug == null or not debug.open):
@@ -2216,6 +2289,8 @@ func _draw() -> void:
 				var ust: Dictionary = mp_ui_state if net_client else (mpui.state_for(clampi(view_as, 0, mp.count() - 1)) if mpui != null and mp != null else {})
 				if not ust.is_empty():
 					MpUi.draw(self, ust)
+				if chat != null and (chat.open or not chat.lines.is_empty()):
+					chat.draw()
 				if pause != null:
 					pause.draw()
 			perf_draw_us += Time.get_ticks_usec() - td
@@ -3269,7 +3344,13 @@ func _net_client_tick() -> void:
 func _draw_notices() -> void:
 	var now := Time.get_ticks_msec()
 	var y := 6.0
-	for n in _notices:
+	# Below the player menu while it's open (it has the top of the screen).
+	var ust: Dictionary = mp_ui_state if net_client else (mpui.state_for(clampi(view_as, 0, mp.count() - 1)) if mpui != null and mp != null else {})
+	var shown := _notices
+	if ust.has("m"):
+		y = 378.0
+		shown = _notices.slice(maxi(0, _notices.size() - 3))
+	for n in shown:
 		var left: int = int(n[1]) - now
 		if left <= 0:
 			continue

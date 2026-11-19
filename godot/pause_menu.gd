@@ -5,11 +5,16 @@
 # stops when every player has it open; alone, it stops at once. While it is open, this PC's
 # player gives the game no keys.
 #
+# Hosting, it also has Players: remove a friend from the game (they can't come back this
+# session), and change the password friends join with.
+#
 # Leaving a game with friends in it ends the game for them too when you are the host, so that
 # asks first; so does leaving or exiting with progress since the last save.
 extends RefCounted
 
 const ITEMS := ["Resume", "Leave", "Exit to desktop", "Settings"]
+const HOST_ITEMS := ["Resume", "Players", "Leave", "Exit to desktop", "Settings"]
+const PW_MAX := 20
 const SETTING_ROWS := [1, 2, 3, 4, 5]      # engine.gd _setup_value / _setup_change rows
 const WHITE := 16777215
 const YELLOW := 65535
@@ -17,9 +22,11 @@ const GREY := 8421504
 
 var eng
 var open := false
-var page := "main"         # "main", "settings", "confirm"
+var page := "main"         # "main", "settings", "confirm", "players", "password"
 var sel := 0
 var set_sel := 0
+var pl_sel := 0
+var text := ""             # the password being typed
 var confirm := {}          # {"lines": [...], "yes": Callable, "sel": 1 (No)}
 
 
@@ -67,7 +74,47 @@ func _sound(n: String) -> void:
 		eng.bi.play_sound(int(vm.consts[n]), false)
 
 
-# A key pressed while the menu is open (engine.gd _unhandled_input). Returns true: used.
+func _hosting() -> bool:
+	return eng.mpnet != null and eng.mpnet.role == "host" and eng.mp != null
+
+
+func items() -> Array:
+	return HOST_ITEMS if _hosting() else ITEMS
+
+
+# The Players page's rows: [label, player index or -1 for the password, -2 for Back].
+func _player_rows() -> Array:
+	var out: Array = []
+	for p in eng.mp.list:
+		if p.active and p.index != 0:
+			out.append([p.name, p.index])
+	out.append(["Password: " + ("*".repeat(eng.mpnet.password.length()) if eng.mpnet.password != "" else "none"), -1])
+	out.append(["Back", -2])
+	return out
+
+
+# A key event while the menu is open (engine.gd _unhandled_input): typing on the password
+# page, otherwise the key.
+func key_event(e: InputEventKey) -> void:
+	if page == "password":
+		match e.keycode:
+			KEY_ENTER, KEY_KP_ENTER:
+				eng.mpnet.set_password(text.strip_edges())
+				eng.mp_notice("Friends now join with the new password." if text.strip_edges() != "" else "Friends now join without a password.")
+				_sound("snd_select")
+				page = "players"
+			KEY_ESCAPE:
+				page = "players"
+			KEY_BACKSPACE:
+				text = text.left(text.length() - 1)
+			_:
+				if e.unicode > 32 and e.unicode != 127 and text.length() < PW_MAX:
+					text += char(e.unicode)
+		return
+	key(e.keycode)
+
+
+# A key pressed while the menu is open. Returns true: used.
 func key(code: Key) -> bool:
 	var up: bool = code == KEY_UP or (eng.wasd and code == KEY_W)
 	var down: bool = code == KEY_DOWN or (eng.wasd and code == KEY_S)
@@ -77,14 +124,40 @@ func key(code: Key) -> bool:
 	var back := code == KEY_X or code == KEY_SHIFT or code == KEY_ESCAPE
 	match page:
 		"main":
+			var its := items()
+			sel = clampi(sel, 0, its.size() - 1)
 			if up or down:
-				sel = wrapi(sel + (1 if down else -1), 0, ITEMS.size())
+				sel = wrapi(sel + (1 if down else -1), 0, its.size())
 				_sound("snd_squeak")
 			elif back:
 				close()
 			elif ok:
 				_sound("snd_select")
-				_pick(ITEMS[sel])
+				_pick(its[sel])
+		"players":
+			if not _hosting():
+				page = "main"
+				return true
+			var rows := _player_rows()
+			pl_sel = clampi(pl_sel, 0, rows.size() - 1)
+			if up or down:
+				pl_sel = wrapi(pl_sel + (1 if down else -1), 0, rows.size())
+				_sound("snd_squeak")
+			elif back:
+				page = "main"
+			elif ok:
+				_sound("snd_select")
+				var r: Array = rows[pl_sel]
+				var i: int = r[1]
+				if i == -2:
+					page = "main"
+				elif i == -1:
+					text = eng.mpnet.password
+					page = "password"
+				else:
+					var nm: String = r[0]
+					confirm = {"lines": ["* Remove %s from the game?" % nm, "* They can't come back this time."], "yes": func(): eng.mpnet.kick(i), "sel": 1, "back": "players"}
+					page = "confirm"
 		"settings":
 			if up or down:
 				set_sel = wrapi(set_sel + (1 if down else -1), 0, SETTING_ROWS.size())
@@ -99,9 +172,9 @@ func key(code: Key) -> bool:
 				confirm["sel"] = 1 - int(confirm["sel"])
 				_sound("snd_squeak")
 			elif back:
-				page = "main"
+				page = String(confirm.get("back", "main"))
 			elif ok:
-				page = "main"
+				page = String(confirm.get("back", "main"))
 				if int(confirm["sel"]) == 0:
 					(confirm["yes"] as Callable).call()
 	return true
@@ -114,6 +187,9 @@ func _pick(item: String) -> void:
 		"Settings":
 			page = "settings"
 			set_sel = 0
+		"Players":
+			page = "players"
+			pl_sel = 0
 		"Leave":
 			_ask(_leave_lines(), _leave)
 		"Exit to desktop":
@@ -166,15 +242,46 @@ func draw() -> void:
 	eng.draw_rect(Rect2(0, 0, 640, 480), Color(0, 0, 0, 0.5))
 	match page:
 		"main":
-			_box(Rect2(190, 120, 260, 230))
-			eng._text(320 - 48, 136, "PAUSED", WHITE, "fnt_main")
-			for k in ITEMS.size():
-				var y := 186.0 + k * 38.0
-				eng._text(250, y, ITEMS[k], YELLOW if k == sel else WHITE, "fnt_main")
+			var its := items()
+			var h := 80.0 + its.size() * 38.0
+			var top := 240.0 - h / 2.0
+			_box(Rect2(190, top, 260, h))
+			eng._text(320 - 48, top + 16, "PAUSED", WHITE, "fnt_main")
+			for k in its.size():
+				var y := top + 66.0 + k * 38.0
+				eng._text(250, y, its[k], YELLOW if k == sel else WHITE, "fnt_main")
 				if k == sel:
 					eng._heart(222, y + 8)
 			if eng.mp != null and eng.mp.active_count() > 1 and not game_stopped():
-				eng._text(206, 326, "The game goes on for the others.", GREY, "fnt_maintext")
+				eng._text(206, top + h + 10, "The game goes on for the others.", GREY, "fnt_maintext")
+		"players", "password":
+			var rows := _player_rows()
+			var h := 90.0 + rows.size() * 36.0
+			var top := 240.0 - h / 2.0
+			_box(Rect2(130, top, 380, h))
+			eng._text(320 - 56, top + 16, "PLAYERS", WHITE, "fnt_main")
+			for k in rows.size():
+				var y := top + 62.0 + k * 36.0
+				var i: int = rows[k][1]
+				var c := YELLOW if k == pl_sel else WHITE
+				if i >= 0:
+					var soul = eng.chat._soul(i) if eng.chat != null else null
+					if soul != null:
+						eng.draw_texture(soul, Vector2(186, y + 8))
+					eng._text(212, y, String(rows[k][0]), c, "fnt_main")
+					if k == pl_sel:
+						eng._text(380, y + 6, "Remove", GREY, "fnt_maintext")
+				else:
+					eng._text(186, y, String(rows[k][0]), c, "fnt_main")
+				if k == pl_sel:
+					eng._heart(156, y + 8)
+			if rows.size() == 2:
+				eng._text(186, top + h - 30, "No friends here yet.", GREY, "fnt_maintext")
+			if page == "password":
+				_box(Rect2(100, 170, 440, 140))
+				eng._text(176, 186, "The password friends join with", WHITE, "fnt_maintext")
+				eng._text(130, 222, text + "_", YELLOW, "fnt_main")
+				eng._text(130, 270, "Empty: no password.  [ENTER] OK  [ESC] Back", GREY, "fnt_maintext")
 		"settings":
 			_box(Rect2(100, 110, 440, 260))
 			eng._text(260, 124, "SETTINGS", WHITE, "fnt_main")

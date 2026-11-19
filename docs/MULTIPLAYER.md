@@ -364,6 +364,30 @@ player whose camera and values the room's own objects follow) and members.
   on the spot of the one who found it.
 - Tests: `--mpcheck battles / save / death / gather`.
 
+### Stage 7: player menu, chat, host controls (done 2026-11-19)
+
+- **Player menu** (`godot/mp_pmenu.gd`). Enter facing another player (within 34 pixels in
+  front of you, walking about freely) opens it, drawn like Undertale's overworld menu with
+  their name on top. The host runs it like the other prompts, so a friend's opens on the
+  host and reaches their PC with each frame.
+  - **Give item**: your items listed; the item leaves your inventory with Undertale's
+    `scr_itemshift` and goes into their first free slot ("Greg can't carry any more." when
+    they have 8).
+  - **Give gold**: an amount, LEFT/RIGHT by 1 and UP/DOWN by 10.
+  - **Heal**: your food (items whose `scr_itemuseb` case calls `scr_recoitem`; the others
+    are greyed out). The item's own use code runs as the player being healed, so it heals
+    what it heals in the game (with their weapon: a Burnt Pan adds 4).
+  - **Check**: their STAT page in Undertale's own words (`stat_menu_*` text).
+  - Both players are told what happened. Notices move below the menu while it's open.
+- **Chat** (`godot/chat.gd`). T opens it in a game with friends. Each PC types on its own
+  keyboard and gives the game no keys meanwhile; a friend's line goes to the host, which
+  sends it to everyone (`"chat"`). Lines show bottom left with a SOUL in the player's colour
+  for 8 seconds, and the last 6 while the chat is open. 60 characters a line.
+- **Host controls**: the host's pause menu has Players: each friend (Remove asks first; a
+  removed name can't come back this session, even with the password) and the password
+  friends join with (empty: none).
+- Tests: `--mpcheck pmenu` (local), `--mpchat TEXT` on host and friend, `--mpcheck kick`.
+
 ### Stage 8: battles (in progress 2026-11-19)
 
 `godot/mp_battles.gd`.

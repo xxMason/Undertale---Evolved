@@ -55,6 +55,26 @@ if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
 $pho = @(Get-Content $ph -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
 $pok = ("$pho" -match 'MPCHECK pause done, 0 failed') -and -not ("$pho $po" -match 'SCRIPT ERROR')
 Say $pok 'pause: co-op only stops when everyone is paused' $(if ($pok) { '' } else { (@($pho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($po | Where-Object { $_ -match 'ERROR' }) -join '; ') })
+# Chat: host and friend each type a line (T, the text, Enter); both PCs get both lines.
+$chh = Join-Path $env:TEMP 'ube_check_chat_host.txt'
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_chat')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '400', '--mphost', '7793', '--mpname', 'Kyle', '--mpchat', '"hi Greg"', '--tps', '60') -RedirectStandardOutput $chh -RedirectStandardError "$chh.err" -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$cho = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7793 --mpname Greg --frames 240 --tps 60 --mpchat 'hello, Kyle!' 2>&1 | ForEach-Object { "$_" }
+if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
+$chho = @(Get-Content $chh -ErrorAction SilentlyContinue)
+$chok = ("$chho" -match 'CHAT Kyle: hi Greg') -and ("$chho" -match 'CHAT Greg: hello, Kyle!') -and ("$cho" -match 'CHAT Kyle: hi Greg') -and ("$cho" -match 'CHAT Greg: hello, Kyle!') -and -not ("$chho $cho" -match 'SCRIPT ERROR')
+Say $chok 'chat: both lines reach both PCs' $(if ($chok) { '' } else { (@($chho + $cho | Where-Object { $_ -match '^CHAT|ERROR' }) -join '; ') })
+# The host removes the friend from the pause menu's Players page and changes the password; the
+# friend can't come back, even with the new password.
+$kh = Join-Path $env:TEMP 'ube_check_kick_host.txt'
+$hostp = Start-Process -FilePath $godot -ArgumentList @('--headless', '--path', "`"$gd`"", '--', '--seed', '7', '--savedir', "`"$(Join-Path $env:TEMP 'ube_check_kick')`"", '--room', 'room_ruins9', '--set', 'plot=9.2', '--frames', '900', '--mphost', '7794', '--mpname', 'Kyle', '--mpcheck', 'kick', '--tps', '60') -RedirectStandardOutput $kh -RedirectStandardError "$kh.err" -PassThru -WindowStyle Hidden
+Start-Sleep -Seconds 3
+$ko1 = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7794 --mpname Greg --frames 400 --tps 60 2>&1 | ForEach-Object { "$_" }
+$ko2 = & $godot --headless --path $gd -- --mpjoin 127.0.0.1:7794 --mpname greg --mppw abc --frames 100 --tps 60 2>&1 | ForEach-Object { "$_" }
+if (-not $hostp.WaitForExit(60000)) { $hostp.Kill() }
+$kho = @(Get-Content $kh -ErrorAction SilentlyContinue | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' })
+$kok = ("$kho" -match 'MPCHECK kick done, 0 failed') -and ("$ko1" -match 'removed you from the game') -and ("$ko2" -match 'You were removed from this game') -and -not ("$kho $ko1 $ko2" -match 'SCRIPT ERROR')
+Say $kok 'host: remove a friend, change the password' $(if ($kok) { '' } else { (@($kho | Where-Object { $_ -match 'FAIL|ERROR' }) + @($ko1 + $ko2 | Where-Object { $_ -match 'NET ended|ERROR' }) -join '; ') })
 
 if ($Full) {
     foreach ($f in Get-ChildItem (Join-Path $root 'logs\trace') -Filter 'real_g*_s42_lv20_f1500.txt' -ErrorAction SilentlyContinue) {
@@ -168,7 +188,9 @@ $mpruns = @(
     # Player 2 comes in on 1 HP and goes down; player 1 revives them from MERCY after 3 turns.
     @('revive', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '1500', '--press', $wk, '--pfeed', '2=idle')),
     # Player 2 is in their menu (not pulled in), then joins with Enter by where player 1 stood.
-    @('join', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '2400', '--press', $pz1, '--pfeed', "2=$jz2"))
+    @('join', @('--room', 'room_ruins9', '--set', 'plot=11', '--frames', '2400', '--press', $pz1, '--pfeed', "2=$jz2")),
+    # Stage 7: player 2 faces player 1, opens the player menu with Enter: Check, Give item, Give gold, Heal.
+    @('pmenu', @('--room', 'room_ruins9', '--set', 'plot=9.2,hp=10,gold=20,item.0=1,item.1=1', '--frames', '205', '--pfeed', '2=10:39x8,25:37x1,40:13x2,50:40x2,55:40x2,60:40x2,70:90x2,100:88x2,110:38x2,115:38x2,120:38x2,125:90x2,130:90x2,135:88x2,140:40x2,145:90x2,150:90x2,160:13x2,165:40x2,170:40x2,175:90x2,180:90x2'))
 )
 foreach ($r in $mpruns) {
     $mo = & $godot --headless --path $gd -- --game --seed 7 --savedir (Join-Path $env:TEMP "ube_check_mp_$($r[0])") --players 2 --mpcheck $r[0] @($r[1]) 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^MPCHECK|SCRIPT ERROR' }

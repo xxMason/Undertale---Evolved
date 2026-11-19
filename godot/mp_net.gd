@@ -31,6 +31,7 @@ var eng
 var role := ""             # "host", "client" or ""
 var conn: ENetConnection = null
 var password := ""
+var kicked := {}            # names (lower case) the host removed: not let back in this session
 var log_on := false
 
 # Host: peer -> {"index", "name", "keys": [frame key lists], "held", "frames_sent", "bytes"}
@@ -223,7 +224,29 @@ func menu_service() -> void:
 func kick(index: int) -> void:
 	for peer in peers:
 		if int(peers[peer]["index"]) == index:
+			peers[peer]["kicked"] = true
+			kicked[String(peers[peer]["name"]).to_lower()] = true
 			_refuse(peer, "%s removed you from the game." % eng.net_name())
+
+
+# A chat line typed on this PC: a friend's goes to the host, the host's straight to everyone.
+func chat(text: String) -> void:
+	if role == "client" and link != null and state == "playing":
+		link.send(0, var_to_bytes({"t": "chat", "text": text}), ENetPacketPeer.FLAG_RELIABLE)
+	elif role == "host":
+		_chat_from(0, text)
+
+
+# The host passes player i's line on to everyone (and shows it here).
+func _chat_from(i: int, text: String) -> void:
+	text = text.strip_edges().left(eng.Chat.MAX_LEN)
+	if text == "" or eng.mp == null or i >= eng.mp.list.size():
+		return
+	var nm: String = eng.mp.list[i].name
+	eng.chat.add(i, nm, text)
+	for peer in peers:
+		if int(peers[peer]["index"]) >= 0:
+			_send(peer, {"t": "chat", "i": i, "name": nm, "text": text})
 
 
 # This PC's player opened or closed the pause menu: a friend's PC tells the host.
@@ -262,6 +285,9 @@ func _host_msg(peer: ENetPacketPeer, m: Dictionary) -> void:
 			var nm := String(m.get("name", "")).strip_edges().left(12)
 			if nm == "":
 				nm = "Friend"
+			if kicked.has(nm.to_lower()):
+				_refuse(peer, "You were removed from this game.")
+				return
 			for p in eng.mp.list:
 				if p.active and p.name == nm:
 					nm = nm.left(10) + str(p.index + 2)
@@ -281,6 +307,10 @@ func _host_msg(peer: ENetPacketPeer, m: Dictionary) -> void:
 			var i := int(peers[peer]["index"])
 			if i >= 0 and i < eng.mp.list.size():
 				eng.mp.list[i].paused = bool(m.get("on", false))
+		"chat":
+			var i := int(peers[peer]["index"])
+			if i >= 0:
+				_chat_from(i, String(m.get("text", "")))
 
 
 func _host_lost(peer: ENetPacketPeer) -> void:
@@ -290,7 +320,7 @@ func _host_lost(peer: ENetPacketPeer) -> void:
 	peers.erase(peer)
 	if int(p["index"]) >= 0:
 		eng.mp.remove_player(int(p["index"]))
-		notice("%s left." % p["name"])
+		notice(("%s was removed." if p.get("kicked", false) else "%s left.") % p["name"])
 		_log("%s left" % p["name"])
 
 
@@ -628,6 +658,8 @@ func _client_msg(m: Dictionary) -> void:
 		"notice":
 			if eng.has_method("mp_notice"):
 				eng.mp_notice(String(m.get("text", "")))
+		"chat":
+			eng.chat.add(int(m.get("i", 0)), String(m.get("name", "?")), String(m.get("text", "")))
 
 
 var _key_hist: Array = []
@@ -849,6 +881,7 @@ func leave() -> void:
 
 
 func stop() -> void:
+	kicked = {}
 	if conn != null:
 		if role == "host":
 			for peer in peers:

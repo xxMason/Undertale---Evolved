@@ -7,6 +7,8 @@
 # draws it the same way.
 extends RefCounted
 
+const MpPMenu = preload("res://mp_pmenu.gd")
+
 const LEFT := 37
 const RIGHT := 39
 const Z := 90
@@ -17,12 +19,15 @@ const SHIFT := 16
 var eng
 var mp
 var prompts := {}   # player index -> {"lines": [..], "sel": 0 (Yes) / 1 (No), "done": Callable(bool)}
+var pmenu = null    # mp_pmenu.gd: the player menus (Enter facing another player)
 var waits := {}     # player index -> {"text": String, "cancel": Callable()}: X calls cancel
 
 
 func setup(e) -> void:
 	eng = e
 	mp = e.mp
+	pmenu = MpPMenu.new()
+	pmenu.setup(e)
 
 
 func ask(p: int, lines: Array, done: Callable) -> void:
@@ -34,7 +39,7 @@ func close(p: int) -> void:
 
 
 func busy(p: int) -> bool:
-	return prompts.has(p)
+	return prompts.has(p) or pmenu.busy(p)
 
 
 func set_wait(p: int, text: String, cancel := Callable()) -> void:
@@ -60,10 +65,27 @@ func filter(p) -> void:
 			return
 		k.clear(-1)
 		return
+	if pmenu.busy(p.index):
+		pmenu.key(p)
+		return
 	var w = waits.get(p.index)
 	if w != null and (k.pressed(X) or k.pressed(SHIFT)) and (w["cancel"] as Callable).is_valid():
 		waits.erase(p.index)
 		(w["cancel"] as Callable).call()
+	# Enter facing another player: the player menu.
+	if k.pressed(ENTER) and w == null and _can_menu(p):
+		var to: int = pmenu.facing(p)
+		if to >= 0:
+			k.clear(-1)
+			pmenu.open(p.index, to)
+
+
+# Player p is walking about freely in a room (no text, menu or battle).
+func _can_menu(p) -> bool:
+	if float(mp.value(p.index, "interact", 0.0)) != 0.0 or float(mp.value(p.index, "menuno", -1.0)) >= 0.0:
+		return false
+	var rooms = eng.get("mprooms")
+	return rooms == null or not rooms._private_room(eng.vm.room)
 
 
 func _sound(p: int, name: String) -> void:
@@ -85,12 +107,17 @@ func state_for(p: int) -> Dictionary:
 	var w = waits.get(p)
 	if w != null:
 		out["w"] = w["text"]
+	var m: Dictionary = pmenu.state_for(p)
+	if not m.is_empty():
+		out["m"] = m
 	return out
 
 
 # Draws a state on the engine's screen (640x480): the waiting note at the top, the prompt as a
 # text box at the bottom, Yes / No with the SOUL beside the chosen one.
 static func draw(e, st: Dictionary) -> void:
+	if st.has("m"):
+		MpPMenu.draw(e, st["m"])
 	if st.has("w"):
 		var t := String(st["w"])
 		var w := 16.0 * t.length() + 24.0
